@@ -1,0 +1,17 @@
+name: "Practical_repository"
+output_dir: "."
+navbar:
+  title: "Choic of processing impact associations and predictions"
+  left:
+    - text: "Home"
+      href: index.html
+    - text: "FreeSurfer pipeline"
+      href: RR_1.0_FreeSurferPipeline.html
+    - text: "FSLANAT and FSLVBM pipelines"
+      href: RR_2.0_FSL_AnatVbmPipelines.html
+    - text: "CAT12 standalone pipeline"
+      href: RR_4.0_CAT12_standalone.html
+    - text: "Phenotype for LMM"
+      href: RR_5.0_Phenotype_LMM.html
+    - text: "Multiple testing"
+      href: RR_8.0_Bonferroni.html

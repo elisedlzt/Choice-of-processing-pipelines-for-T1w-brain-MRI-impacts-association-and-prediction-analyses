@@ -1,0 +1,850 @@
+---
+title: "Phenotype for LMM"
+author: "by Elise Delzant"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+   epuRate::PCTG:
+    toc: TRUE
+    number_sections: FALSE
+    code_folding: "show"
+---
+
+
+
+```{r, echo=FALSE}
+options(width = 60)
+knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 60), tidy = TRUE)
+
+```
+
+#columns to extract
+```{R,message=FALSE,eval=F}
+library(xlsx)
+xl<-read.xlsx(file = '/Users/elise.delzant/Documents/01GM_Association/Phenotypes/ukb_pheno.xlsx',sheetIndex = 1)
+df_xl<-as.data.frame(xl)
+extract_feat<-df_xl$UKB_extract_field
+chr_feat<-c(1)
+for (elem in extract_feat){
+  chr_feat<-paste(chr_feat,elem,sep=',')
+}
+chr_feat
+```
+
+
+#extract .tab from ukb with our ID of interest 
+```{bash, include=FALSE,eval=F}
+wd="/network/iss/ukbiobank/unorganized/unorganized_pheno"
+od="/network/iss/ukbiobank/clinic/pheno/organized_pheno"
+bind="/network/iss/ukbiobank/software" 
+cd $od
+
+${bind}/qsubshcom "cut -f1,7,8,57,58,59,61,62,63,73,76,80,471,472,473,474,475,476,477,478,479,739,740,741,862,863,864,874,875,876,878,879,880,1064,1065,1066,1159,1160,1161,1163,1164,1165,1175,1176,1177,1265,1266,1267,1273,1274,1275,1337,1338,1339,1345,1346,1347,1393,1394,1395,1413,1414,1415,1417,1418,1419,1421,1422,1423,1580,1581,1582,1584,1585,1586,1624,1625,1626,1679,1680,1681,1691,1692,1693,1699,1700,1701,1771,1772,1773,3971,3972,3973,3975,3976,3977,3979,3980,3981,3983,3984,3985,3987,3988,3989,3991,3992,3993,4019,4020,4021,5293,5294,5295,5297,5298,5299,5361,5362,5363,5365,5366,5367,7223,7224,7225,7226,7227,7228,7229,7230,7231,7232,7233,7234,7271,7272,7273,7274,7275,7276,7277,7278,7279,7280,7281,7282,7283,7284,7285,7286,7287,7288,7289,7290,7291,7520,7530,7531,9401,9402,9403,9424,9427,9430,9433,10244,10245,10375,10377,10380,10908,10918,10923,10933,10966,10970,10974,11024,11106,11107,11108,11116,11118,11119,13330,13331,13352,14778,14780,14784,14798,14828,14830,14832,15141,15153,15178,15214,15284,15290,15346,15352,15620,15822,20707,20721,20733 ${wd}/ukb673035.tab > ${od}/ukb673035_UKbiobank_ED_OscaPhenotype.tab|;
+" 1 10G UKB_pheno_extract 24:00:00 " "
+
+```
+
+#extract ethnicity
+```{bash,eval=F}
+wd="/network/iss/ukbiobank/unorganized/unorganized_pheno"
+od="/network/iss/ukbiobank/clinic/pheno/organized_pheno"
+bind="/network/iss/ukbiobank/software" 
+cd $od
+
+${bind}/qsubshcom "cut -f1,1102,11103,11104,11105 ${wd}/ukb673035.tab > ${od}/ukb673035_UKbiobank_ED_Ethnicity.tab|;
+" 1 10G UKB_pheno_extract 24:00:00 " "
+```
+
+#keep only subjects that have a T1 and separate into T1 20252 and T1 20263, and participants who want to be rm 
+```{r,message=FALSE,echo=FALSE,eval=F}
+pheno_init<-read.table("/Users/elise.delzant/Documents/01GM_Association/ukb673035_UKbiobank_ED_OscaPhenotype.tab",header=FALSE)
+rm_part<-read.table('/Users/elise.delzant/Documents/01GM_Association/UKB_rm_list.csv',header=F)
+pheno<-pheno_init
+colnames(pheno)=c('ID',as.list(df_xl$Column_name_r))
+#keep ID that have 20252 and 20263
+pheno_T1_nifti<-pheno[!is.na(pheno$T1_nifti),]
+pheno_T1_FS<-pheno[!is.na(pheno$T1_FreeSurfer),]
+
+
+pheno_T1_nifti<-pheno_T1_nifti[-1,]
+pheno_T1_FS<-pheno_T1_FS[-1,]
+
+unusable_20252<-read.table("/Users/elise.delzant/Documents/01GM_Association/unusable_20252.csv",header=FALSE)
+pheno_T1_nifti=pheno_T1_nifti[!pheno_T1_nifti$ID %in% unusable_20252$V1,]
+
+unusable_20263<-read.table('/Users/elise.delzant/Documents/01GM_Association/final_id_FS.csv',header=F)
+pheno_T1_FS<-pheno_T1_FS[pheno_T1_FS$ID %in% unusable_20263$V1,]
+dim(pheno_T1_FS)
+dim(pheno_T1_nifti)
+pheno<-pheno[(!(is.na(pheno$T1_nifti)) | !is.na(pheno$T1_FreeSurfer)), ]
+pheno<-pheno[-1,]
+
+
+pheno<-pheno[pheno$ID %in% pheno_T1_FS$ID & pheno$ID %in% pheno_T1_nifti$ID,]
+pheno<-pheno[pheno$T2_Flair==1 & !is.na(pheno$T2_Flair),]
+pheno_no_T2<-pheno[pheno$T2_Flair==0 & !is.na(pheno$T2_Flair),]
+
+#remove participants who requested not to be used
+pheno<-pheno[!pheno$ID %in% rm_part$V1,]
+
+dim(pheno)
+```
+
+#birth date and year
+```{r,message=FALSE,eval=F}
+#Field 31
+library(dplyr)
+library(lubridate)
+pheno$Sexe<-as.factor(pheno$Sexe)
+levels(pheno$Sexe)<-c('Female','Male')
+
+#Field 11093 
+pheno$Assessment_center_age<-as.numeric(pheno$Assessment_center_age)
+
+#Add birth_date 
+pheno$Birth_year<-as.numeric(pheno$Birth_year)
+pheno$Birth_month<-as.numeric(pheno$Birth_month)
+pheno$Birth_date<-make_date(year=pheno$Birth_year,month = pheno$Birth_month,day = 1)
+
+
+```
+
+#Create Total Brain Volume feature
+#Fields 26556 26587 26553 26584
+```{r,message=FALSE,eval=F}
+missings<-pheno[is.na(pheno$GMV) | is.na(pheno$Cerebral_WMV_l) | is.na(pheno$Cerebral_WMV_r) | is.na(pheno$Cerebell_WMV_l) | is.na(pheno$Cerebell_WMV_r),]
+pheno<-pheno[!(pheno$ID %in% missings$ID),]
+pheno$TBV<-as.numeric(pheno$GMV)+as.numeric(pheno$Cerebral_WMV_l)+as.numeric(pheno$Cerebral_WMV_r)+as.numeric(pheno$Cerebell_WMV_l)+as.numeric(pheno$Cerebell_WMV_r)
+
+
+
+```
+
+#Depression and bipolar status with field 20126
+
+```{r,message=FALSE,eval=F}
+pheno$Dep_status<-as.factor(pheno$Dep_status)
+levels(pheno$Dep_status)<-c('No Bipolar or depression','Bipolar I','Bipolar II','Major depression (severe)','Major depression (moderate)','Single major depression episod')
+pheno$Depression<-as.factor(ifelse(pheno$Dep_status %in% c('No Bipolar or depression','Bipolar I','Bipolar II'),'No depression',pheno$Dep_status))
+levels(pheno$Depression)<-c('Major depression (severe)','Major depression (moderate)','Single major depression episod','No depression')
+```
+
+
+#Excluding former drinkers from frequency drinking alcohol  
+```{r,message=FALSE,eval=F}
+pheno[which(pheno$Alcohol_freq=='-818'),'Alcohol_freq']<-NA
+
+pheno[which(is.na(pheno$Alcohol_ever_dependent)),'Alcohol_ever_dependent']<-2 #new value that indicates NA stands for not ever having been addicted 
+pheno[which(pheno$Alcohol_ever_dependent=='-818'),'Alcohol_freq']<-NA
+pheno[which(pheno$Alcohol_ever_dependent=='-121'),'Alcohol_freq']<-NA
+
+pheno[pheno$Alcohol_ever_dependent==1 & ! is.na(pheno$Alcohol_ever_dependent),"Alcohol_freq"]<-NA #in Alcohol freq we want only people that have not been formerly addicted 
+pheno$Alcohol_freq<-as.factor(pheno$Alcohol_freq)
+levels(pheno$Alcohol_freq)<-c('Never','Monthly or less','2-4 t./month','2-3t./week','4+t./week')
+```
+
+#stroke, alzheimer and parkinson
+```{r,message=FALSE,eval=F}
+pheno$Stroke<-as.factor(ifelse(is.na(pheno$Stroke_date),"No","Yes"))
+pheno$Stroke_age<-as.numeric(as.Date(pheno$Stroke_date)-pheno$Birth_date)/365.25
+#5 subjects with Stroke date 01/01/1900
+pheno$Alzheimer<-as.factor(ifelse(is.na(pheno$Alzheimer_date),"No","Yes"))
+pheno$Alzheimer_age<-as.numeric(as.Date(pheno$Alzheimer_date)-pheno$Birth_date)/365.25
+pheno$Parkinson<-as.factor(ifelse(is.na(pheno$Parkinson_date),"No","Yes"))
+pheno$Parkinson_age<-as.numeric(as.Date(pheno$Parkinson_date)-pheno$Birth_date)/365.25
+
+
+#get infos on when alzheimer, how many years after imaging
+alz<-pheno[pheno$Alzheimer=='Yes',]
+alz<-alz[,c('Alzheimer_date','Date_center_V2')]
+alz$Diff<-as.Date(alz$Alzheimer_date)-as.Date(alz$Date_center_V2)
+summary(as.numeric(alz$Diff))
+
+#get infos on when Parkinson, how many years after imaging
+alz<-pheno[pheno$Parkinson=='Yes',]
+alz<-alz[,c('Parkinson_date','Date_center_V2')]
+alz$Diff<-as.Date(alz$Parkinson_date)-as.Date(alz$Date_center_V2)
+summary(as.numeric(alz$Diff))
+```
+
+#merging visit 0, 1 and 2 
+```{r,message=FALSE,eval=F}
+#Field 21001
+pheno$BMI<-as.numeric(ifelse(is.na(pheno$BMI_V2),ifelse(is.na(pheno$BMI_V1),pheno$BMI_V0,pheno$BMI_V1),pheno$BMI_V2))
+
+#Field 845 value -2 equals never went to school 
+pheno[which(pheno$Education_age_V2%in%c('-1','-3')),'Education_age_V2']<-NA
+pheno[which(pheno$Education_age_V1%in%c('-1','-3')),'Education_age_V1']<-NA
+pheno[which(pheno$Education_age_V0%in%c('-1','-3')),'Education_age_V0']<-NA
+pheno$Education_age<-as.numeric(ifelse(is.na(pheno$Education_age_V2),ifelse(is.na(pheno$Education_age_V1),pheno$Education_age_V0,pheno$Education_age_V1),pheno$Education_age_V2))
+pheno[which(pheno$Education_age==-2),'Education_age']<-0
+#Field 1200
+pheno[which(pheno$Sleeplessness_V2=='-3'),'Sleeplessness_V2']<-NA
+pheno[which(pheno$Sleeplessness_V1=='-3'),'Sleeplessness_V1']<-NA
+pheno[which(pheno$Sleeplessness_V0=='-3'),'Sleeplessness_V0']<-NA
+pheno$Sleeplessness<-as.factor(ifelse(is.na(pheno$Sleeplessness_V2),ifelse(is.na(pheno$Sleeplessness_V1),pheno$Sleeplessness_V0,pheno$Sleeplessness_V1),pheno$Sleeplessness_V2))
+
+levels(pheno$Sleeplessness)<-c('Never/rarely','Sometimes','Usually')
+
+#1 Never/rarely
+#2 Sometimes
+#3 Usually
+
+#set "prefer not to answer to NA
+for(i in 0:2){
+    var_name <- paste0("Tobacco_current_V",i)
+    pheno[which(pheno[,var_name] =="-3"),var_name] <- NA
+  
+    var_name <- paste0("Tobacco_past_V",i)
+    pheno[which(pheno[,var_name] =="-3"),var_name] <- NA
+}
+
+#Field 1239 and 1249 
+#new var smoking 
+pheno$smoking<-NA
+pheno[which(pheno$Tobacco_past_V0=="2" | pheno$Tobacco_past_V0=="4" |  pheno$Tobacco_past_V0=="3" & pheno$Tobacco_past_V1=="2" | pheno$Tobacco_past_V1=="4" |  pheno$Tobacco_past_V1=="3"  & pheno$Tobacco_past_V2=="2" | pheno$Tobacco_past_V2=="4" |  pheno$Tobacco_past_V2=="3" & pheno$Tobacco_current_V0=="1" | pheno$Tobacco_current_V0=="0" & pheno$Tobacco_current_V1=="1" | pheno$Tobacco_current_V1=="0" & pheno$Tobacco_current_V2=="1" | pheno$Tobacco_current_V2=="0"),"smoking"]<-"Occasionnally"
+
+pheno[which(pheno$Tobacco_current_V0=="0" & pheno$Tobacco_current_V1=="0" & pheno$Tobacco_current_V2=="0" & pheno$Tobacco_past_V0=="4" & pheno$Tobacco_past_V1=="4" & pheno$Tobacco_past_V2=="4"),"smoking"]<-"Never_smoked"
+pheno[which(pheno$Tobacco_past_V0=="3" | pheno$Tobacco_past_V1=="3" | pheno$Tobacco_past_V2=="3" & pheno$Tobacco_current_V0=="0"  & pheno$Tobacco_current_V1=="0"  & pheno$Tobacco_current_V1=="0"),"smoking"]<-"Tried"
+pheno[which(pheno$Tobacco_past_V0=="1" | pheno$Tobacco_past_V1=="1" | pheno$Tobacco_past_V2=="1" | pheno$Tobacco_current_V0=="2" | pheno$Tobacco_current_V1=="2" | pheno$Tobacco_current_V2=="2"),'smoking']<-"Ever_regularly"
+pheno[which(is.na(pheno$smoking) & pheno$Tobacco_current_V2=="1"),'smoking']<-'Occasionnally'
+pheno[which(is.na(pheno$smoking) & pheno$Tobacco_past_V2=="3"),'smoking']<-"Tried"
+
+# get an average of smoked cigarettes accross three time points, -10 means less than one cigarette
+pheno$Cig_daily_V1<-as.numeric(pheno$Cig_daily_V1)
+pheno[which(pheno$Cig_daily_V1==-1),'Cig_daily_V1']<-NA
+pheno[which(pheno$Cig_daily_V1==-10),'Cig_daily_V1']<-1
+
+pheno$Cig_daily_V2<-as.numeric(pheno$Cig_daily_V2)
+pheno[which(pheno$Cig_daily_V2==-1),'Cig_daily_V2']<-NA
+pheno[which(pheno$Cig_daily_V2==-10),'Cig_daily_V2']<-1
+
+pheno$Cig_daily_V3<-as.numeric(pheno$Cig_daily_V3)
+pheno[which(pheno$Cig_daily_V3==-1),'Cig_daily_V3']<-NA
+pheno[which(pheno$Cig_daily_V3==-10),'Cig_daily_V3']<-1
+
+
+pheno$cigarettes_daily<-rowMeans(pheno[,c('Cig_daily_V1','Cig_daily_V2','Cig_daily_V3')])
+
+
+#check that non smokers and "tried" have not answer this question 
+
+if(nrow(pheno[which(pheno$smoking == "Tried" & !is.na(pheno$cigarettes_daily)),]) !=0){print("We have someone who's only tried a cigarette once or twice who indicates amounts of cigarettes smoked"); break}
+
+if(nrow(pheno[which(pheno$smoking == "Never_smoked" & !is.na(pheno$cigarettes_daily)),]) !=0){print("We have someone who's never smoked who indicates amounts of cigarettes smoked"); break}
+
+
+# check that the ones who didn't answer the daily cigarettes question are only occasional smokers 
+nrow(pheno[which(pheno$smoking == "Occasionally" & !is.na(pheno$cigarettes_daily)),]) # none either 
+
+# split regular smokers into quantiles based on their daily cigarettes indication
+pheno$smoking[which(pheno$cigarettes_daily <= quantile(pheno$cigarettes_daily,0.25, na.rm=T))] <- "Regular_bottomquantile"
+pheno$smoking[which(pheno$cigarettes_daily > quantile(pheno$cigarettes_daily,0.25, na.rm=T) & pheno$cigarettes_daily <= quantile(pheno$cigarettes_daily,0.5, na.rm=T))] <- "Regular_2ndquantile"
+pheno$smoking[which(pheno$cigarettes_daily > quantile(pheno$cigarettes_daily,0.5, na.rm=T) & pheno$cigarettes_daily <= quantile(pheno$cigarettes_daily,0.75, na.rm=T))] <- "Regular_3rdquantile"
+pheno$smoking[which(pheno$cigarettes_daily > quantile(pheno$cigarettes_daily,0.75, na.rm=T) & pheno$cigarettes_daily <= quantile(pheno$cigarettes_daily,1, na.rm=T))] <- "Regular_4thquantile"
+
+# If I define it this way I will have to get rid of the regular smokers who didn't indicate how many cigarettes they use :(
+pheno$smoking <- ifelse(pheno$smoking == "Ever_regularly" & is.na(pheno$cigarettes_daily), NA, pheno$smoking)
+
+pheno$smoking<-factor(pheno$smoking,levels=c('Never_smoked','Tried','Occasionnally','Regular_bottomquantile','Regular_2ndquantile','Regular_3rdquantile','Regular_4thquantile'))
+#Field 1787
+pheno[which(pheno$Maternal_smoking_V2%in%c("-1","-3")),'Maternal_smoking_V2']<-NA
+pheno[which(pheno$Maternal_smoking_V1%in%c("-1","-3")),'Maternal_smoking_V1']<-NA
+pheno[which(pheno$Maternal_smoking_V0%in%c("-1","-3")),'Maternal_smoking_V0']<-NA
+
+pheno$Maternal_smoking<-as.factor(ifelse(is.na(pheno$Maternal_smoking_V2),ifelse(is.na(pheno$Maternal_smoking_V1),pheno$Maternal_smoking_V0,pheno$Maternal_smoking_V1),pheno$Maternal_smoking_V2))
+levels(pheno$Maternal_smoking)<-c('No','Yes')
+#Field 2976
+pheno[which(pheno$Diabetes_V2%in%c("-1","-3")),'Diabetes_V2']<-NA
+pheno[which(pheno$Diabetes_V1%in%c("-1","-3")),'Diabetes_V1']<-NA
+pheno[which(pheno$Diabetes_V0%in%c("-1","-3")),'Diabetes_V0']<-NA
+
+pheno$Diabetes<-as.factor(ifelse(is.na(pheno$Diabetes_V2),ifelse(is.na(pheno$Diabetes_V1),pheno$Diabetes_V0,pheno$Diabetes_V1),pheno$Diabetes_V2))
+levels(pheno$Diabetes)<-c('No','Yes')
+#Field 2966
+pheno[which(pheno$High_blood_pressure_age_V2%in%c("-1","-3")),'High_blood_pressure_age_V2']<-NA
+pheno[which(pheno$High_blood_pressure_age_V1%in%c("-1","-3")),'High_blood_pressure_age_V1']<-NA
+pheno[which(pheno$High_blood_pressure_age_V0%in%c("-1","-3")),'High_blood_pressure_age_V0']<-NA
+
+pheno$High_blood_pressure_age<-as.numeric(ifelse(is.na(pheno$High_blood_pressure_age_V2),ifelse(is.na(pheno$High_blood_pressure_age_V1),pheno$High_blood_pressure_age_V0,pheno$High_blood_pressure_age_V1),pheno$High_blood_pressure_age_V2))
+
+#new variable high blood pressure as category Yes No
+pheno$High_blood_pressure<-as.factor(ifelse(is.na(pheno$High_blood_pressure_age),'No','Yes'))
+
+#Field 2976
+pheno$Diabetes_age<-as.numeric(ifelse(is.na(pheno$Diabetes_age_V2),ifelse(is.na(pheno$Diabetes_age_V1),pheno$Diabetes_age_V0,pheno$Diabetes_age_V1),pheno$Diabetes_age_V2))
+
+pheno[which(pheno$Diabetes_age %in% c(-1,-3)),'Diabetes_age']<-NA
+
+#Field 4803
+pheno[which(pheno$Tinnitus_V2=="-1" |pheno$Tinnitus_V2=="-3"),"Tinnitus_V2"]<-NA
+pheno[which(pheno$Tinnitus_V1=="-1" |pheno$Tinnitus_V1=="-3"),"Tinnitus_V1"]<-NA
+pheno[which(pheno$Tinnitus_V0=="-1" |pheno$Tinnitus_V0=="-3"),"Tinnitus_V0"]<-NA
+
+pheno$Tinnitus<-as.factor(ifelse(is.na(pheno$Tinnitus_V2),ifelse(is.na(pheno$Tinnitus_V1),pheno$Tinnitus_V0,pheno$Tinnitus_V1),pheno$Tinnitus_V2))
+levels(pheno$Tinnitus)<-c(0,1,2,3,4,NA) 
+levels(pheno$Tinnitus)<-c('Never','Most or all the time','A lot of the time','Some of the time','Not now but in the past')
+
+#field 2754 age at first birth 
+pheno[which(pheno$First_birth_V1 %in% c('-3','-4')),'First_birth_V1']<-NA
+pheno[which(pheno$First_birth_V2 %in% c('-3','-4')),'First_birth_V2']<-NA
+pheno[which(pheno$First_birth_V3 %in% c('-3','-4')),'First_birth_V3']<-NA
+
+pheno$First_birth_age<-as.numeric(ifelse(is.na(pheno$First_birth_V3),ifelse(is.na(pheno$First_birth_V2),pheno$First_birth_V3,pheno$First_birth_V2),pheno$First_birth_V3))
+
+#Hip circumference
+pheno$Hip_circumf<-as.numeric(ifelse(is.na(pheno$Hip_circumf_V2),ifelse(is.na(pheno$Hip_circumf_V1),pheno$Hip_circumf_V0,pheno$Hip_circumf_V1),pheno$Hip_circumf_V2))
+
+
+#Waist circumference
+pheno$Waist_circumf<-as.numeric(ifelse(is.na(pheno$Waist_circumf_V2),ifelse(is.na(pheno$Waist_circumf_V1),pheno$Waist_circumf_V0,pheno$Waist_circumf_V1),pheno$Waist_circumf_V2))
+
+#Nb children (male only)
+pheno[which(pheno$Nb_children_V2 %in% c('-1','-3')),'Nb_children_V2']<-NA
+pheno[which(pheno$Nb_children_V1 %in% c('-1','-3')),'Nb_children_V1']<-NA
+pheno[which(pheno$Nb_children_V0 %in% c('-1','-3')),'Nb_children_V0']<-NA
+pheno$Nb_children<-ifelse(is.na(pheno$Nb_children_V2),ifelse(is.na(pheno$Nb_children_V1),pheno$Nb_children_V0,pheno$Nb_children_V1),pheno$Nb_children_V2)
+
+#Nb live birth (female only)
+pheno[which(pheno$Nb_live_birth_V2 %in% c('-3')),'Nb_live_birth_V2']<-NA
+pheno[which(pheno$Nb_live_birth_V1 %in% c('-3')),'Nb_live_birth_V1']<-NA
+pheno[which(pheno$Nb_live_birth_V0 %in% c('-3')),'Nb_live_birth_V0']<-NA
+pheno$Nb_live_birth<-ifelse(is.na(pheno$Nb_live_birth_V2),ifelse(is.na(pheno$Nb_live_birth_V1),pheno$Nb_live_birth_V0,pheno$Nb_live_birth_V1),pheno$Nb_live_birth_V2)
+
+#merging both 
+pheno$Nb_children_both<-as.factor(ifelse(is.na(pheno$Nb_children),pheno$Nb_live_birth,pheno$Nb_children))
+
+#Age when first sexual intercourse
+pheno[which(pheno$Sex_first_age_V2 %in% c('-1','-3')),'Sex_first_age_V2']<-NA
+pheno[which(pheno$Sex_first_age_V1 %in% c('-1','-3')),'Sex_first_age_V1']<-NA
+pheno[which(pheno$Sex_first_age_V0 %in% c('-1','-3')),'Sex_first_age_V0']<-NA
+
+pheno$Sex_first_age<-as.numeric(ifelse(is.na(pheno$Sex_first_age_V2),ifelse(is.na(pheno$Sex_first_age_V1),pheno$Sex_first_age_V0,pheno$Sex_first_age_V1),pheno$Sex_first_age_V2))
+
+#Scaling T1
+pheno$Scaling_T1<-as.factor(pheno$Scaling_T1)
+
+#SNR
+pheno$SNR<-as.numeric(pheno$SNR)
+
+#Brain volume
+pheno$Brain_volume<-as.numeric(pheno$Brain_volume)
+
+#Discrepancy between T1 and standard template linearly aligned
+pheno$Discrepancy_template<-as.numeric(pheno$Discrepancy_template)
+
+```
+#cognitiv score
+```{r,message=FALSE,eval=F}
+
+
+#cognitiv score Anna Furtjes 
+#Verbal numeric reasoning (Fluid intelligence scores)
+VNR_vars<-c('Fluid_intell_score_1_V0','Fluid_intell_score_1_V1','Fluid_intell_score_1_V2','Fluid_intell_score_2')
+
+#Matrix pattern completion 
+Matrix_vars<-c('Mat_pat_comp_V2','Mat_pat_comp_V3')
+
+#Symbol digit 
+SymbolDigit_vars<-c('Number_digit_2_V2','Number_digit_2_V3','Number_digit_1')
+
+#PairMatching 
+PairMatching_vars<-c('Incorrect_match_V01','Incorrect_match_V02','Incorrect_match_V03','Incorrect_match_V11','Incorrect_match_V12','Incorrect_match_V13','Incorrect_match_V21','Incorrect_match_V22','Incorrect_match_V23')
+
+#Reaction time 
+RT_vars<-c('Reaction_time_V0','Reaction_time_V1','Reaction_time_V2','Reaction_time_V3')
+
+Tower_vars<-c('Tower_rearr_V2','Tower_rearr_V3')
+
+#Trail Making 
+TrailMaking_vars<-c('Duration_alphanumeric_1','Duration_alphanumeric_2')
+
+# item 6350: entry of zero means not completed 
+pheno$Duration_alphanumeric_1<-as.numeric(pheno$Duration_alphanumeric_1)
+pheno$Duration_alphanumeric_1 <- ifelse(pheno$Duration_alphanumeric_1 <= 0.0, NA, pheno$Duration_alphanumeric_1)
+
+pheno$Duration_alphanumeric_2<-as.numeric(pheno$Duration_alphanumeric_2)
+pheno$Reaction_time_V0<-as.numeric(pheno$Reaction_time_V0)
+pheno$Reaction_time_V1<-as.numeric(pheno$Reaction_time_V1)
+pheno$Reaction_time_V2<-as.numeric(pheno$Reaction_time_V2)
+pheno$Reaction_time_V3<-as.numeric(pheno$Reaction_time_V3)
+pheno$Incorrect_match_V01<-as.numeric(pheno$Incorrect_match_V01)
+pheno$Incorrect_match_V02<-as.numeric(pheno$Incorrect_match_V02)
+pheno$Incorrect_match_V03<-as.numeric(pheno$Incorrect_match_V03)
+pheno$Incorrect_match_V11<-as.numeric(pheno$Incorrect_match_V11)
+pheno$Incorrect_match_V12<-as.numeric(pheno$Incorrect_match_V12)
+pheno$Incorrect_match_V13<-as.numeric(pheno$Incorrect_match_V13)
+pheno$Incorrect_match_V21<-as.numeric(pheno$Incorrect_match_V21)
+pheno$Incorrect_match_V22<-as.numeric(pheno$Incorrect_match_V22)
+pheno$Incorrect_match_V23<-as.numeric(pheno$Incorrect_match_V23)
+pheno$Fluid_intell_score_1_V0<-as.numeric(pheno$Fluid_intell_score_1_V0)
+pheno$Fluid_intell_score_1_V1<-as.numeric(pheno$Fluid_intell_score_1_V1)
+pheno$Fluid_intell_score_1_V2<-as.numeric(pheno$Fluid_intell_score_1_V2)
+pheno$Fluid_intell_score_2<-as.numeric(pheno$Fluid_intell_score_2)
+pheno$Mat_pat_comp_V2<-as.numeric(pheno$Mat_pat_comp_V2)
+pheno$Mat_pat_comp_V3<-as.numeric(pheno$Mat_pat_comp_V3)
+pheno$Number_digit_1<-as.numeric(pheno$Number_digit_1)
+pheno$Number_digit_2_V2<-as.numeric(pheno$Number_digit_2_V2)
+pheno$Number_digit_2_V3<-as.numeric(pheno$Number_digit_2_V3)
+pheno$Tower_rearr_V2<-as.numeric(pheno$Tower_rearr_V2)
+pheno$Tower_rearr_V3<-as.numeric(pheno$Tower_rearr_V3)
+all_vars <- c(VNR_vars,Matrix_vars,SymbolDigit_vars,PairMatching_vars,RT_vars,Tower_vars,TrailMaking_vars)
+pheno$Tinnitus_yes<-ifelse(is.na(pheno$Tinnitus) | pheno$Tinnitus=='Never',0,1)
+#apply reverse function because in some variables a lower value means better cognitiv ability 
+
+reverse=function(a){
+    a * (-1)
+}
+
+
+pheno[,c(PairMatching_vars,TrailMaking_vars,RT_vars)]<-apply(pheno[,c(PairMatching_vars,TrailMaking_vars,RT_vars)],2,FUN=reverse)
+
+# Standardise variables
+normFunc <- function(x){(x-mean(x, na.rm = T))/sd(x, na.rm = T)}
+
+pheno[,all_vars] <- apply(pheno[,all_vars],2,normFunc)
+summary(pheno[,all_vars])
+
+##############################
+## 1 Verbal-numerical reasoning
+##############################
+
+pheno$mean_VNR <- rowMeans(pheno[,VNR_vars],na.rm=T)
+
+summary(pheno$mean_VNR)
+
+##############################
+## 2 Matrix 
+##############################
+
+pheno$mean_Matrix <- rowMeans(pheno[,Matrix_vars],na.rm=T)
+summary(pheno$mean_Matrix)
+
+##############################
+## 3 Symbol Digit
+##############################
+
+pheno$mean_SymbolDigit <- rowMeans(pheno[,SymbolDigit_vars],na.rm=T)
+summary(pheno$mean_SymbolDigit)
+
+##############################
+## 4 Pairs Matching
+##############################
+pheno$mean_PairMatching <- rowMeans(pheno[,PairMatching_vars],na.rm=T)
+summary(pheno$mean_PairMatching)
+
+##############################
+## 5 Reaction Time 
+##############################
+#RT_vars
+
+pheno$mean_RT <- rowMeans(pheno[,RT_vars],na.rm=T)
+summary(pheno$mean_RT)
+
+
+##############################
+## 6 Tower 
+##############################
+# Tower_vars
+
+pheno$mean_Tower <- rowMeans(pheno[,Tower_vars],na.rm=T)
+
+summary(pheno$mean_Tower)
+
+##############################
+## 7 TrailMaking
+##############################
+# TrailMaking_vars
+## 0 represents "Trail not completed
+
+
+pheno$mean_TrailMaking <- rowMeans(pheno[,TrailMaking_vars],na.rm=T)
+summary(pheno$mean_TrailMaking)
+
+##################################################
+## Create Factor Scores
+##################################################
+library(lavaan)
+gpheno <- pheno[,c("ID","mean_VNR", "mean_Matrix", "mean_SymbolDigit", "mean_PairMatching", "mean_RT", "mean_Tower", "mean_TrailMaking")]
+
+#### remove all participants who have missing values in all cog vars 
+if(sum(rowSums(is.na(gpheno)) == 7) == 0){print("Each participant has at least one cognitive measurement - woop")}
+
+# remove outliers for each cognitive variable
+colSums(!is.na(gpheno))
+
+for(i in c("mean_VNR", "mean_Matrix", "mean_SymbolDigit", "mean_PairMatching", "mean_RT", "mean_Tower", "mean_TrailMaking")){
+    # calculate volume specific mean 
+        mean_var<-mean(gpheno[,i],na.rm = T)
+    # calculate volume specific sd
+        sd_var <- sd(gpheno[,i], na.rm=T)
+    # remove values that are beyond 4 SDs
+        gpheno[,i][which(gpheno[,i] < mean_var - (sd_var*4) | gpheno[,i] > mean_var + (sd_var*4))]<-NA
+}
+colSums(!is.na(gpheno))
+
+#build SEM model
+gmodel <- "Cog =~ mean_VNR + mean_Matrix + mean_SymbolDigit + mean_PairMatching + mean_RT + mean_Tower + mean_TrailMaking" 
+
+# fit SEM model 
+fit<-cfa(gmodel, data = gpheno,missing = "ML")
+save(fit, file = "g_score_model_fit.RData")
+print(summary(fit))
+
+# predict individual-level factor scores 
+test_gpheno <- as.data.frame(lavPredict(fit, newdata = gpheno, type = "lv", append.data = T))
+
+# merge with gpheno to get correct eid's
+
+gpheno <- merge(test_gpheno, gpheno, by=c("mean_VNR", "mean_Matrix", "mean_SymbolDigit", "mean_PairMatching", "mean_RT", "mean_Tower", "mean_TrailMaking"))
+
+gpheno <- gpheno[,c("ID", "Cog")]
+
+# only keep non-missing participants
+gpheno <- gpheno[!is.na(gpheno$Cog),]
+
+### realised later OSCA wants IID FID value/ no col.names
+gpheno$FID <- gpheno$ID
+
+gpheno <- gpheno[,c("ID","FID","Cog")]
+
+##### remove outliers outside of 4SDs
+mean<-mean(gpheno$Cog, na.rm=T)
+sd<-sd(gpheno$Cog, na.rm=T)
+gpheno$Cog[which(gpheno$Cog < mean - (sd*4) | gpheno$Cog > mean + (sd*4))]<-NA
+
+print(summary(gpheno))
+
+pheno$Cog<-ifelse(pheno$ID %in% gpheno$ID,gpheno$Cog,NA)
+
+```
+
+```{r,message=FALSE,eval=F}
+library(lavaan)
+library(semPlot)
+
+
+## fit_reserve gives the same results as fit but with fully positive factor loadings (by reverse I mean that I have multiplied items with negative polarity by -1 so that all loadings are positive)
+## we now want to get the variance explained by the model:
+## we take the sum of the variance output for each item and divide by the number of items
+total_variance_explained <-mean(1-mean(rowSums(inspect(fit,what="std")$theta)))
+print(paste0("The total variance explained by this model is ", round(total_variance_explained, digits=2)))
+
+labels <- c("VNR", "Matrix", "Symbol\nDigit", "Pair\nMatching", "RT", "Tower", "Trail\nMaking","Cog")
+
+ semPaths(fit,
+                           what = "paths",
+                           whatLabels="est", 
+                           intercepts=FALSE, 
+                           style="OpenMx",
+                           layout = "tree",
+                           nodeLabels=labels,
+                           curvePivot=TRUE, 
+                           edge.color="black", 
+                           sizeMan = 8,
+                           pastel=TRUE, 
+                           rainbowStart = 0.5,
+                           nDigits = 2, 
+                            title = TRUE)
+
+```
+
+#pain
+```{r,message=FALSE,eval=F}
+
+#reponses du choix multiple: 
+#1 Headache
+#2 Facial pain 
+#3 Neck or shoulder
+#4 Back pain
+#5 Stomach pain
+#6 Hip pain 
+#7 Knee pain 
+#8 Pain all over the body 
+
+
+pheno[which(pheno$Pain_V00 %in% c('-7','-3','8')),'Pain_V00']<-NA
+pheno[which(pheno$Pain_V01 %in% c('-7','-3','8')),'Pain_V01']<-NA
+pheno[which(pheno$Pain_V02 %in% c('-7','-3','8')),'Pain_V02']<-NA
+pheno[which(pheno$Pain_V03 %in% c('-7','-3','8')),'Pain_V03']<-NA
+pheno[which(pheno$Pain_V04 %in% c('-7','-3','8')),'Pain_V04']<-NA
+pheno[which(pheno$Pain_V05 %in% c('-7','-3','8')),'Pain_V05']<-NA
+pheno[which(pheno$Pain_V06 %in% c('-7','-3','8')),'Pain_V06']<-NA
+pheno[which(pheno$Pain_V10 %in% c('-7','-3','8')),'Pain_V10']<-NA
+pheno[which(pheno$Pain_V11 %in% c('-7','-3','8')),'Pain_V11']<-NA
+pheno[which(pheno$Pain_V12 %in% c('-7','-3','8')),'Pain_V12']<-NA
+pheno[which(pheno$Pain_V13 %in% c('-7','-3','8')),'Pain_V13']<-NA
+pheno[which(pheno$Pain_V14 %in% c('-7','-3','8')),'Pain_V14']<-NA
+pheno[which(pheno$Pain_V15 %in% c('-7','-3','8')),'Pain_V15']<-NA
+pheno[which(pheno$Pain_V16 %in% c('-7','-3','8')),'Pain_V16']<-NA
+pheno[which(pheno$Pain_V20 %in% c('-7','-3','8')),'Pain_V20']<-NA
+pheno[which(pheno$Pain_V21 %in% c('-7','-3','8')),'Pain_V21']<-NA
+pheno[which(pheno$Pain_V22 %in% c('-7','-3','8')),'Pain_V22']<-NA
+pheno[which(pheno$Pain_V23 %in% c('-7','-3','8')),'Pain_V23']<-NA
+pheno[which(pheno$Pain_V24 %in% c('-7','-3','8')),'Pain_V24']<-NA
+pheno[which(pheno$Pain_V25 %in% c('-7','-3','8')),'Pain_V25']<-NA
+pheno[which(pheno$Pain_V26 %in% c('-7','-3','8')),'Pain_V26']<-NA
+
+pheno$all_pains_V0<-0
+pheno$all_pains_V1<-0
+pheno$all_pains_V2<-0
+
+pain_V0<-function(x){
+  all_pains<-c(as.character(x[,c('Pain_V00','Pain_V01','Pain_V02','Pain_V03','Pain_V04','Pain_V05','Pain_V06')]))
+  all_pains<-all_pains[!is.na(all_pains)]
+  if ('1' %in% all_pains & (x[,c('Headache_V0')]!='1')) all_pains<-all_pains[all_pains!="1"]
+  if ('2' %in% all_pains & (x[,c('Facial_pain_V0')]!='1')) all_pains<-all_pains[all_pains!="2"]
+  if ('3' %in% all_pains & (x[,c('Neck_pain_V0')]!='1')) all_pains<-all_pains[all_pains!="3"]
+  if ('4' %in% all_pains & (x[,c('Back_pain_V0')]!='1')) all_pains<-all_pains[all_pains!="4"]
+  if ('5' %in% all_pains & (x[,c('Stomach_pain_V0')]!='1')) all_pains<-all_pains[all_pains!="5"]
+  if ('6' %in% all_pains & (x[,c('Hip_pain_V0')]!='1')) all_pains<-all_pains[all_pains!="6"]
+  if ('7' %in% all_pains & (x[,c('Knee_pain_V0')]!='1')) all_pains<-all_pains[all_pains!="7"]
+  return(length(all_pains))
+ 
+}
+
+pain_V1<-function(x){
+  all_pains<-c(as.character(x[,c('Pain_V10','Pain_V11','Pain_V12','Pain_V13','Pain_V14','Pain_V15','Pain_V16')]))
+  all_pains<-all_pains[!is.na(all_pains)]
+  if ('1' %in% all_pains & (x[,c('Headache_V1')]!='1')) all_pains<-all_pains[all_pains!="1"]
+  if ('2' %in% all_pains & (x[,c('Facial_pain_V1')]!='1')) all_pains<-all_pains[all_pains!="2"]
+  if ('3' %in% all_pains & (x[,c('Neck_pain_V1')]!='1')) all_pains<-all_pains[all_pains!="3"]
+  if ('4' %in% all_pains & (x[,c('Back_pain_V1')]!='1')) all_pains<-all_pains[all_pains!="4"]
+  if ('5' %in% all_pains & (x[,c('Stomach_pain_V1')]!='1')) all_pains<-all_pains[all_pains!="5"]
+  if ('6' %in% all_pains & (x[,c('Hip_pain_V1')]!='1')) all_pains<-all_pains[all_pains!="6"]
+  if ('7' %in% all_pains & (x[,c('Knee_pain_V1')]!='1')) all_pains<-all_pains[all_pains!="7"]
+  return(length(all_pains))
+ 
+}
+
+pain_V2<-function(x){
+  all_pains<-c(as.character(x[,c('Pain_V20','Pain_V21','Pain_V22','Pain_V23','Pain_V24','Pain_V25','Pain_V26')]))
+  all_pains<-all_pains[!is.na(all_pains)]
+  if ('1' %in% all_pains & (x[,c('Headache_V2')]!='1')) all_pains<-all_pains[all_pains!="1"]
+  if ('2' %in% all_pains & (x[,c('Facial_pain_V2')]!='1')) all_pains<-all_pains[all_pains!="2"]
+  if ('3' %in% all_pains & (x[,c('Neck_pain_V2')]!='1')) all_pains<-all_pains[all_pains!="3"]
+  if ('4' %in% all_pains & (x[,c('Back_pain_V2')]!='1')) all_pains<-all_pains[all_pains!="4"]
+  if ('5' %in% all_pains & (x[,c('Stomach_pain_V2')]!='1')) all_pains<-all_pains[all_pains!="5"]
+  if ('6' %in% all_pains & (x[,c('Hip_pain_V2')]!='1')) all_pains<-all_pains[all_pains!="6"]
+  if ('7' %in% all_pains & (x[,c('Knee_pain_V2')]!='1')) all_pains<-all_pains[all_pains!="7"]
+  return(length(all_pains))
+ 
+}
+
+for (i in seq(1,dim(pheno)[1])){
+  x<-pheno[i,]
+  pheno[i,'all_pains_V0']<-pain_V0(x)
+}
+
+for (i in seq(1,dim(pheno)[1])){
+  x<-pheno[i,]
+  pheno[i,'all_pains_V1']<-pain_V1(x)
+}
+
+for (i in seq(1,dim(pheno)[1])){
+  x<-pheno[i,]
+  pheno[i,'all_pains_V2']<-pain_V2(x)
+}
+
+summary(as.factor(pheno$all_pains_V0))
+summary(as.factor(pheno$all_pains_V1))
+summary(as.factor(pheno$all_pains_V2))
+
+#merging all into one variable 
+pheno$all_pains<-as.factor(ifelse(is.na(pheno$all_pains_V2),ifelse(is.na(pheno$all_pains_V1),pheno$all_pains_V0,pheno$all_pains_V1),pheno$all_pains_V2))
+
+
+```
+
+
+#compute mean GM density 
+```{r,message=FALSE,eval=F}
+
+arg = commandArgs(trailingOnly=TRUE)
+
+#entrée liste des paths 
+library(oro.nifti)
+library(scales)
+list_path=arg[1]
+writing_path=arg[2]
+working_directory_fsl=arg[3]
+working_directory_cat12=arg[4]
+
+ids<-read.csv(list_path,header = FALSE,sep="")
+cat12<-c()
+anat<-c()
+vbm<-c()
+for (im in ids$V1){
+  path_fsl<-paste(as.character(working_directory_fsl),as.character(im),sep="/")
+  path_cat12<-paste(as.character(working_directory_cat12),as.character(im),sep="/")
+  print(paste(path_fsl,"output/vbm/T1_brain_struc_GM_to_template_GM_mod.nii.gz",sep="/"))
+  print(paste(path_cat12,"OutputVol/mwp1T1_brain_padded.nii.gz",sep="/"))
+  img_i_anat <- c(readNIfTI(paste(path_fsl,"output/vbm/T1_brain_struc_GM_to_template_GM_mod.nii.gz",sep="/"),reorient = FALSE))
+  img_i_vbm<-c(readNIfTI(paste(path_fsl,"output/anat/T1_brain_pve_1_struc_GM_to_template_GM_mod.nii.gz",sep="/"),reorient = FALSE))
+  img_i_cat12<-c(readNIfTI(paste(path_cat12,"OutputVol/mwp1T1_brain_padded.nii.gz",sep="/"),reorient=FALSE))
+  cat12<-c(cat12,mean(c(img_i_cat12)))
+  anat<-c(anat,mean(c(img_i_anat)))
+  vbm<-c(vbm,mean(c(img_i_vbm)))
+}
+
+write.table(data.frame(cat12), file=paste(writing_path,"GM_density_cat12",sep='/'))
+write.table(data.frame(anat), file=paste(writing_path,"GM_density_anat",sep='/'))
+write.table(data.frame(vbm), file=paste(writing_path,"GM_density_vbm",sep='/'))
+
+```
+
+```{bash,message=FALSE,eval=F}
+
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+
+cd ${wd}
+bind="/network/lustre/iss02/ukbiobank/software" 
+${bind}/qsubshcom "source /network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/code/source_conda|;
+conda activate r_env|;
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"|;
+fsl="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/FSLVBM"|;
+cat12="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/CAT12"|;
+Rscript /network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/code/GM_density.R Downloadfsl/participants.tsv \${wd} \${fsl} \${cat12}|;  
+" 4 24G mean_GM_density 24:00:00 "--partition=bigmem"
+
+```
+
+#add GM density to pheno df 
+
+```{R,message=FALSE,eval=F}
+GM_dens_cat12<-read.table('../../Filezilla_dl/GM_density_cat12',header=F)
+GM_dens_vbm<-read.table('../../Filezilla_dl/GM_density_vbm',header=F)
+GM_dens_anat<-read.table('../../Filezilla_dl/GM_density_anat',header=F)
+
+participants<-read.table('../../Filezilla_dl/participants.tsv')
+
+df<-data.frame(GM_dens_anat$V1,GM_dens_cat12$V1,GM_dens_vbm$V1,participants$V1)
+df<-df[df$participants.V1 %in% pheno$ID,]
+
+pheno$GM_dens_Vol<-df$GM_dens_cat12.V1
+pheno$GM_dens_Vbm<-df$GM_dens_vbm.V1
+pheno$GM_dens_Anat<-df$GM_dens_anat.V1
+
+```
+
+#total surface area freesurfer val 
+```{r,message=FALSE,eval=F}
+pheno$Surf_left_hemi<-as.numeric(pheno$Surf_left_hemi)
+pheno$Surf_right_hemi<-as.numeric(pheno$Surf_right_hemi)
+pheno$Total_surface_area<-pheno$Surf_left_hemi + pheno$Surf_right_hemi
+
+```
+
+
+#as factors 
+```{r,message=FALSE,eval=F}
+pheno$Sexe<-as.factor(pheno$Sexe)
+levels(pheno$Sexe)<-c('Female','Male')
+pheno$Center<-as.factor(pheno$Center)
+pheno$T1_nifti<-as.factor(pheno$T1_nifti)
+pheno$T1_FreeSurfer<-as.factor(pheno$T1_FreeSurfer)
+pheno[which(pheno$Cannabis=="-818"),"Cannabis"]<-NA
+pheno$Cannabis<-as.factor(pheno$Cannabis)
+levels(pheno$Cannabis)<-c('No','1-2t.','3-10t.','11-100t.','100+')
+pheno[which(pheno$Ongoing_addiction=="-818"),"Ongoing_addiction"]<-NA
+levels(pheno$Ongoing_addiction)<-c('No','Yes')
+pheno$Ongoing_addiction<-as.factor(pheno$Ongoing_addiction)
+pheno$First_psychotic_age<-as.factor(pheno$First_psychotic_age)
+pheno$Mean_rfmri<-as.numeric(pheno$Mean_rfmri)
+pheno$X_pos<-as.numeric(pheno$X_pos)
+pheno$Y_pos<-as.numeric(pheno$Y_pos)
+pheno$Z_pos<-as.numeric(pheno$Z_pos)
+pheno$IMD<-as.numeric(pheno$IMD)
+pheno[which(pheno$Restlessness=='-818'),'Restlessness']<-NA
+pheno$Restlessness<-as.factor(pheno$Restlessness)
+levels(pheno$Restlessness)<-c('Not at all','Several days','More than half the days','Nearly every day')
+
+#Date_centerV2 create gap between first MRI made from center and one's MRI
+pheno$Date_center<-as.Date(pheno$Date_center)
+
+pheno_c1<-pheno[pheno$Center==11025,]
+pheno_c2<-pheno[pheno$Center==11026,]
+pheno_c3<-pheno[pheno$Center==11027,]
+pheno_c4<-pheno[pheno$Center==11028,]
+
+min1<-min(pheno_c1$Date_center)
+min2<-min(pheno_c2$Date_center)
+min3<-min(pheno_c3$Date_center)
+min4<-min(pheno_c4$Date_center)
+
+pheno_c1$Diff_to_mri<-as.numeric(pheno_c1$Date_center-min1)
+pheno_c2$Diff_to_mri<-as.numeric(pheno_c2$Date_center-min2)
+pheno_c3$Diff_to_mri<-as.numeric(pheno_c3$Date_center-min3)
+pheno_c4$Diff_to_mri<-as.numeric(pheno_c4$Date_center-min4)
+
+pheno$Diff_to_mri<-NA
+pheno[which(pheno$Center==11025),'Diff_to_mri']<-as.numeric(pheno_c1$Date_center-min1)
+pheno[which(pheno$Center==11026),'Diff_to_mri']<-as.numeric(pheno_c2$Date_center-min2)
+pheno[which(pheno$Center==11027),'Diff_to_mri']<-as.numeric(pheno_c3$Date_center-min3)
+pheno[which(pheno$Center==11028),'Diff_to_mri']<-as.numeric(pheno_c4$Date_center-min4)
+
+pheno$Diff_to_mri<-pheno$Diff_to_mri/365.25
+
+save(pheno,file='pheno_plots.RData')
+```
+
+#keeping only final variables 
+```{r,message=FALSE,eval=F}
+
+#center categories 
+cent<-c('ID','Center')
+
+#individual characteristics 
+indiv<-c('Sexe','Assessment_center_age','BMI','Education_age','Maternal_smoking','IMD','Sex_first_age','Nb_children_both','Brain_volume','Waist_circumf','Hip_circumf','TBV')
+
+#Addiction
+addict<-c('smoking','Alcohol_freq')
+
+#Disease
+disease<-c('Sleeplessness','Diabetes','High_blood_pressure','Stroke','Alzheimer','Parkinson','Tinnitus','Restlessness','all_pains')
+
+#Depression and bipolarity
+dep<-'Depression'
+
+# 
+#T1 related variables
+t1<-c('X_pos','Y_pos','Diff_to_mri','Mean_rfmri','Discrepancy_template','Discrepancy_template_non_lin','Scaling_T1','SNR','GM_dens_Vol','GM_dens_Anat','GM_dens_Vbm','Total_surface_area')
+
+#Cognition
+cog<-'Cog'
+
+pheno_lmm<-pheno[,c(cent,indiv,addict,disease,dep,t1,cog)]
+
+levels(pheno_lmm$Sexe)<-c(0,1)
+levels(pheno_lmm$Maternal_smoking)<-c(0,1)
+levels(pheno_lmm$smoking)<-c(0,1,2,3,4,5,6)
+levels(pheno_lmm$Alcohol_freq)<-c(0,1,2,3,4)
+levels(pheno_lmm$Sleeplessness)<-c(0,1,2)
+levels(pheno_lmm$Restlessness)<-c(0,1,2,3)
+levels(pheno_lmm$Diabetes)<-c(0,1)
+levels(pheno_lmm$Parkinson)<-c(0,1)
+levels(pheno_lmm$Stroke)<-c(0,1)
+levels(pheno_lmm$High_blood_pressure)<-c(0,1)
+levels(pheno_lmm$Tinnitus)<-c(0,1,2,3,4)
+levels(pheno_lmm$Depression)<-c(4,3,2,1)
+levels(pheno_lmm$Alzheimer)<-c(0,1)
+pheno_lmm$Nb_children_both<-as.numeric(pheno_lmm$Nb_children_both)
+save(pheno_lmm,file='pheno_lmm.RData')
+write.table(colnames(pheno_lmm),'../phenotypes_list',row.names=F,col.names=F)
+
+```
+
+#divide into main and replicate 
+
+```{r,message=FALSE,eval=F}
+
+load('pheno_lmm.RData')
+
+main<-pheno_lmm[which(pheno_lmm$Center==11025),]
+replicate<-pheno_lmm[which(pheno_lmm$Center %in% c(11026,11027,11028)),]
+save(main,file='../Data/main.Rdata')
+save(replicate,file='../Data/replicate.RData')
+write.table(as.data.frame(main$ID),file = '/Users/elise.delzant/Documents/01GM_Association/main_id.csv',row.names = FALSE,col.names = FALSE)
+write.table(as.data.frame(replicate$ID),file = '/Users/elise.delzant/Documents/01GM_Association/replicate_id.csv',row.names = FALSE,col.names = FALSE)
+```
+
+

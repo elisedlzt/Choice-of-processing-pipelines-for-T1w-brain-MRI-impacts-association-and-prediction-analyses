@@ -1,0 +1,508 @@
+---
+title: "CAT12 standalone pipeline"
+author: "by Elise Delzant"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+   epuRate::PCTG:
+    toc: TRUE
+    number_sections: FALSE
+    code_folding: "show"
+---
+
+
+```{r, echo=FALSE}
+options(width = 60)
+knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 60), tidy = TRUE)
+
+```
+
+get cat12_standalone version zip file 
+```{bash, message=FALSE, warning=FALSE,eval=F}
+module load proxy 
+bind=/network/lustre/iss02/ukbiobank/software
+wd=/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant
+
+cd ${wd}
+wget http://141.35.69.218/cat12/CAT12.8.1_r2040_R2017b_MCR_Linux.zip
+
+${bind}/qsubshcom "cd \${wd} |;
+unzip  CAT12.8.1_r2040_R2017b_MCR_Linux.zip |;
+" 1 12Gunzip_cat12 01:00:00 " "
+
+bind="/network/lustre/iss02/ukbiobank/software" 
+${bind}/qsubshcom "cd /network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/CAT12.8.1_r2040_R2017b_MCR_Linux|;
+./install -mode silent -agreeToLicense yes -destinationFolder /network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/CAT12.8.1_r2040_R2017b_MCR_Linux|;
+" 1 12G matlab_run 01:00:00 " "
+```
+
+#modifying cat12 cat_standalone_resample.m file to resample lh and rh separately
+```{bash, message=FALSE, warning=FALSE,eval=F}
+#% merge hemispheres?
+matlabbatch{1}.spm.tools.cat.stools.surfresamp.merge_hemi =0 ; #0 instead of 1 
+
+```
+
+
+run cat12 segmentation and normalization pipeline and surface resample (lh and rh separately)
+#1hour per subject
+```{bash,message=FALSE,warning=FALSE,eval=F}
+
+cat="/network/iss/ukbiobank/ukbiobank-remaining/elise.delzant/CAT12.8.1_r2040_R2017b_MCR_Linux"
+wd="/network/iss/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/iss/ukbiobank/software" 
+cd ${cat}
+#dat=\$(sed -n \"\${TASK_ID}{p;q}\" ${wd}/Downloadfsl/participants.tsv)|;
+
+${bind}/qsubshcom "
+dat=2482303|;
+source /network/iss/ukbiobank/ukbiobank-remaining/elise.delzant/code/source_conda|;
+${cat}/standalone/cat_standalone.sh -m ${cat}/v93 -b ${cat}/standalone/cat_standalone_segment_enigma.m  ${wd}/CAT12/\${dat}/T1_brain.nii.gz|;
+${cat}/standalone/cat_standalone.sh -m ${cat}/v93 -b ${cat}/standalone/cat_standalone_resample.m  ${wd}/CAT12/\${dat}/CAT12.8.1/surf/rh.thickness* -a1 "0" -a2 "0"|;
+conda activate pyth|;
+python ${wd}/code/cat_shape.py ${wd}/CAT12/${dat}/CAT12.8.1/surf ${wd}/CAT12/${dat}/CAT12.8.1/surf/lh.thick.tsv ${wd}/CAT12/${dat}/CAT12.8.1/surf/rh.thick.tsv|;
+mkdir -p  ${wd}/CAT12/${dat}/OutputSurf|;
+mkdir -p  ${wd}/CAT12/${dat}/OutputVol|;
+mv ${wd}/CAT12/${dat}/CAT12.8.1/surf/lh.thick.tsv ${wd}/CAT12/${dat}/OutputSurf/lh.thick.tsv
+mv ${wd}/CAT12/${dat}/CAT12.8.1/surf/rh.thick.tsv ${wd}/CAT12/${dat}/OutputSurf/rh.thick.tsv
+conda activate r_env|;
+Rscript ${wd}/code/nifti_to_tsv.R ${wd}/CAT12/${dat}/CAT12.8.1/mri/mwp1T1_brain.nii ${wd}/CAT12/${dat}/OutputVol/mwp1T1_brain.tsv
+Rscript ${wd}/code/nifti_to_tsv.R ${wd}/CAT12/${dat}/CAT12.8.1/mri/wp1T1_brain.nii  ${wd}/CAT12/${dat}/OutputVol/wp1T1_brain.tsv
+rm -r ${wd}/CAT12/\${dat}/CAT12.8.1|;
+rm -r ${wd}/CAT12/\${dat}/mri|;
+rm -r ${wd}/CAT12/\${dat}/report|;
+" 1 6G cat12_seg 04:00:00 "-array=2-10" 
+
+
+```
+
+#adding to each vol or surf files the id as header
+```{bash,message=FALSE,warning=FALSE,eval=F}
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/lustre/iss02/ukbiobank/software" 
+cd ${wd}
+${bind}/qsubshcom "dat=\$(sed -n \"\${TASK_ID}{p;q}\" ${wd}/Downloadfsl/participants.tsv)|;
+echo \${dat}|;
+cd ${wd}/CAT12/\${dat}/OutputVol|;
+echo \${dat} > mwp1T1_brain_id.tsv|;
+cat mwp1T1_brain.tsv>>mwp1T1_brain_id.tsv|;
+echo \${dat} > wp1T1_brain_id.tsv|;
+cat mwp1T1_brain.tsv>>wp1T1_brain_id.tsv|;
+rm mwp1T1_brain.tsv|;
+rm wp1T1_brain.tsv|;
+cd ${wd}/CAT12/\${dat}/OutputSurf|;
+id=IID|;
+echo \${id} \${dat} > lh.thick_id.tsv|;
+cat lh.thick.tsv>>lh.thick_id.tsv|;
+echo \${id} \${dat} > rh.thick_id.tsv|;
+cat rh.thick.tsv>>rh.thick_id.tsv|;
+rm rh.thick.tsv|;
+rm lh.thick.tsv|;
+" 1 4G id_to_tsv 00:30:00 "-array=1-4" 
+
+```
+
+
+##to check if coordinates are in the same space as freesurfer's ones 
+#when importing .gii file with nibabel, coordinates are not in the right shape 
+```{python,message=FALSE,warning=FALSE,eval=FALSE}
+import(nibabel)
+test=nibabel.load('../Filezilla_dl/rh.thickness.resampled.T1_brain.gii')
+img_data=[x.data for x in test.darrays]
+coord=np.transpose(np.array(img_data[0].reshape(3,163842)))
+```
+
+to plot coordinates with rgl library to get the shape of the brain 
+```{R,message=FALSE,warning=FALSE,eval=F}
+library(rgl)
+getwd()
+coord_lh<-read.table('../Documents/lh_coord.csv',sep=',',header=F)
+coord_rh<-read.table('/Users/elise.delzant/Documents/rh_coord.csv',sep=',',header=F)
+
+coord_lh<-coord_lh[-c(1),]
+coord_rh<-coord_rh[-c(1),]
+
+coord<-rbind(coord_lh,coord_rh)
+par3d(windowRect = c(0, 0, 800, 800), zoom=0.9)
+spheres3d(as.matrix(coord[,c("V2","V3","V4")]))
+
+spheres3d(as.matrix(coord[,c("V2")]))
+
+rgl.snapshot('Documents/Filezilla_dl/fs_snap.png')
+rgl.close()
+```
+
+
+#nifti_to_tsv.R
+```{R,message=FALSE,warning=FALSE,eval=F}
+arg = commandArgs(trailingOnly=TRUE)
+
+#entrée liste des paths 
+library(oro.nifti)
+
+path_to_nifti=arg[1]
+writing_path=arg[2]
+
+nif<-readNIfTI(path_to_nifti,reorient=FALSE)
+tsv<-c(nif)
+write.table(as.data.frame(tsv),file=paste(writing_path,'T1_brain_gm_reg_mod.tsv',sep='/'),row.names=F,col.names=F)
+
+```
+
+
+#cat_shape.py
+#convert gifti file and .dat file to shape values dataframe (comparable to freesurfer *.fwhm0.fsaverage.asc after recon-all)
+```{python,message=FALSE,warning=FALSE,eval=FALSE}
+
+import sys 
+import os 
+import nibabel 
+import pandas as pd 
+import numpy as np 
+
+input1=sys.argv[1]
+input2=sys.argv[2]
+
+os.chdir(input1)
+test=nibabel.load('lh.thickness.resampled.T1_brain.gii')
+img_data=[x.data for x in test.darrays]
+ls=np.array(["{:03d}".format(n) for n in range(len(img_data[0]))])
+d={'ix':ls,'val':np.array(img_data[2])}
+shape_cat=pd.DataFrame(data=d)
+shape_cat.to_csv(input2,header=False,index=False,sep=" ")
+
+
+```
+
+
+
+#merging all subject files surf (rh and lh) and vol(mwp1)
+```{bash, message=FALSE, eval=F}
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+dl="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/Downloadfsl"
+bind="/network/lustre/iss02/ukbiobank/software" 
+cd ${wd}/CAT12
+for bat in {16..55}
+do 
+echo $bat
+hemi=lh
+${bind}/qsubshcom "cp vertex.csv cat12_${hemi}.thick_batch${bat}.tsv|;
+cat ${dl}/participants.batch${bat}|;
+for elem in `cat ${dl}/participants.batch${bat}`|;
+do|;
+join -j1 cat12_${hemi}.thick_batch${bat}.tsv \${elem}/OutputSurf/${hemi}.thick_id.tsv>tmp_cat12.${hemi}.thick_batch${bat}|;
+cp tmp_cat12.${hemi}.thick_batch${bat} cat12_${hemi}.thick_batch${bat}.tsv|;
+done|;
+rm tmp_cat12.${hemi}.thick_batch${bat}|;
+done|;
+" 1 24G concat_tsv_surf${hemi}${bat} 08:00:00 " " 
+done
+
+
+
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+dl="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/Downloadfsl"
+bind="/network/lustre/iss02/ukbiobank/software" 
+
+for bat in {1..} 
+do 
+echo $bat
+cd ${wd}/CAT12
+${bind}/qsubshcom "echo>cat12.vol.batch${bat}.tsv|;
+for elem in `cat ${dl}/participants.batch${bat}`|;
+do|;
+paste cat12.vol.batch${bat}.tsv \${elem}/OutputVol/mwp1T1_brain_id.tsv>tmp_cat12.vol.batch${bat}|;
+cp tmp_cat12.vol.batch${bat} cat12.vol.batch${bat}.tsv|;
+done|;
+rm tmp_cat12.vol.batch${bat}|;
+" 1 24G concat_tsv_vol${bat} 06:00:00 " " 
+done
+```
+
+#converting to Bod 
+```{bash, echo=FALSE,message=FALSE,warning=FALSE,eval=F}
+
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/lustre/iss02/ukbiobank/software" 
+
+
+mkdir -p ${wd}/CAT12/BodFilesCAT12
+od="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/CAT12"
+cd ${od}
+for batch in {01..86}
+do
+# Cortical volume
+${bind}/qsubshcom "paste voxel_cat12.tsv cat12.vol.batch${batch}.tsv>cat12.vol.batch${batch}vox|;
+${bind}/osca --tefile ${od}/cat12.vol.batch${batch}vox --extract-probe ${od}/BodFilesCAT12/inter_cat12 --make-bod --no-fid --out ${od}/BodFilesCAT12/vol.batch${batch}" 1 10G MakeBod${batch} 10:00:00 "" 
+done
+
+
+
+#surfaces 
+od="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/CAT12"
+cd ${od}
+for batch in {01..86}
+do
+# Cortical volume
+${bind}/qsubshcom "${bind}/osca --tefile ${od}/cat12_rh.thick_batch${batch}.tsv --make-bod --no-fid --out ${od}/BodFilesCAT12/rh.thick.batch${batch}" 1 10G MakeBod${batch} 10:00:00 "" 
+done
+
+
+paste voxel_${proc} tsv_${proc}_batch${batch}>tsv_${proc}_batch${batch}vox|;
+rm tsv_${proc}_batch${batch}|;
+```
+
+#merging all bod files
+```{bash, echo=FALSE,message=FALSE,warning=FALSE,eval=F}
+
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/lustre/iss02/ukbiobank/software" 
+
+cd ${wd}/CAT12/BodFilesCAT12
+for hemi in Vol Lh.Thick Rh.Thick
+do
+${bind}/qsubshcom " "${bind}"/osca --befile-flist "${wd}"/CAT12/BodFilesCAT12/mybod.flist${hemi} --make-bod --no-fid --out "${wd}"/BodFilesCAT12/UKB_${hemi}.FinalBod " 4 64G Merging_Bod${hemi} 02:00:00 "" 
+done 
+
+```
+
+#get a list of voxels where var and mean 0 to remove it from bod because we cannot do it on the whole bod 
+```{R, echo=FALSE,message=FALSE,warning=FALSE,eval=F}
+arg = commandArgs(trailingOnly=TRUE)
+
+wd=arg[1]
+
+vox_fin=seq(1,744175)
+for (batch in seq(1,86)){
+  var_filename=paste('vol_stat_',batch,'.var.txt',sep="")
+  mean_filename=paste('vol_stat_',batch,'.mean.txt',sep="")
+  var=read.table(paste(wd,var_filename,sep='/'))
+  mean=read.table(paste(wd,mean_filename,sep='/'))
+  var_z=var[var$V2==0,]
+  mean_z=mean[mean$V2==0,]
+  inter_vox=intersect(var_z$V1,mean_z$V1)
+  vox_fin=intersect(vox_fin,inter_vox)
+  
+}
+final<-setdiff(seq(1,744175),vox_fin)
+write.table(as.data.frame(final),file = paste(wd,'vox_final2.csv',sep='/'),row.names=F,col.names=F) #385658 voxels to keep
+```
+
+
+#bash for R above
+```{bash, echo=FALSE,message=FALSE,warning=FALSE,eval=F}
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/Volume_mean_var_CAT12"
+bind="/network/lustre/iss02/ukbiobank/software"
+
+${bind}/qsubshcom " module load R|;
+Rscript CAT12_vox_exclude.R ${wd} " 1 24G vox_cat12 02:00:00 "" 
+```
+
+
+
+#remove from all bod_batches
+#from UKB_Vol.bod extract only voxels that are not zero, by excluding the one that are 0 
+# from 744175 to  385658 voxels 
+```{bash, echo=FALSE,message=FALSE,warning=FALSE,eval=F}
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/CAT12"
+bind="/network/lustre/iss02/ukbiobank/software"
+vox="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/Volume_mean_var_CAT12"
+
+#lh and rh 
+for batch in {01..86}
+do
+${bind}/qsubshcom " "${bind}"/osca --befile "${wd}"/BodFilesCAT12/vol.batch${batch} --extract-probe "${vox}"/vox_final2.csv --make-bod --no-fid --out "${wd}"/BodFilesCAT12/vol.batch${batch}.Voxel" 4 64G Vol_Voxels_Bod${batch} 48:00:00 "" 
+done 
+
+
+#and bod files merge again, but final bod has now 385658vox
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/lustre/iss02/ukbiobank/software" 
+
+cd ${wd}/CAT12/BodFilesCAT12
+for hemi in Vol
+do
+${bind}/qsubshcom " "${bind}"/osca --befile-flist "${wd}"/CAT12/BodFilesCAT12/mybod.flist${hemi}.Voxel --make-bod --no-fid --out "${wd}"/BodFilesCAT12/UKB_${hemi}.FinalBod " 4 64G Merging_Bod${hemi} 02:00:00 "" 
+done 
+
+```
+
+
+
+##remove voxels according to threshold
+#we need to cut our probes in two bodes because too big (therefore, first include then exclude, and we will merge in R after)
+
+```{bash, message=FALSE, eval=F}
+
+bind="/network/lustre/iss02/ukbiobank/software" 
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+vox="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/Volume_mean_var_CAT12"
+
+
+${bind}/qsubshcom " "${bind}"/osca --befile "${wd}"/BodFilesCAT12/UKB_Vol.FinalBod --extract-probe "${vox}"/vox_final2_part1.csv --make-bod --no-fid --out "${wd}"/BodFilesCAT12/UKB_Vol.FinalBod_part1" 4 60G Vol_Voxels_Bod1 48:00:00 "--partition=bigmem" 
+${bind}/qsubshcom " "${bind}"/osca --befile "${wd}"/BodFilesCAT12/UKB_Vol.FinalBod --extract-probe "${vox}"/vox_final2_part2.csv --make-bod --no-fid --out "${wd}"/BodFilesCAT12/UKB_Vol.FinalBod_part2" 4 60G Vol_Voxels_Bod2 48:00:00 "--partition=bigmem" 
+
+${bind}/qsubshcom " "${bind}"/osca --befile "${wd}"/BodFilesCAT12/UKB_Vol.FinalBod_part2 --get-mean --get-variance --out "${wd}"/BodFilesCAT12/Vol_part2 " 4 100G Mean_Var_Vol2 48:00:00 "" 
+${bind}/qsubshcom " "${bind}"/osca --befile "${wd}"/BodFilesCAT12/UKB_Vol.FinalBod_part1 --get-mean --get-variance --out "${wd}"/BodFilesCAT12/Vol_part1 " 4 100G Mean_Var_Vol1 48:00:00 "--partition=bigmem" 
+
+
+```
+
+
+#subset of voxels with mean and variance lower than a threshold to define 
+```{R, message=FALSE, eval=F}
+first_vox_var<-read.table('../Vol_part1.var.txt')
+colnames(first_vox_var)<-c('Vox','Var')
+first_vox_mean<-read.table('../Vol_part1.mean.txt')
+colnames(first_vox_mean)<-c('Vox','Mean')
+
+second_vox_var<-read.table('../Vol_part2.var.txt')
+colnames(second_vox_var)<-c('Vox','Var')
+second_vox_mean<-read.table('../Vol_part2.mean.txt')
+colnames(second_vox_mean)<-c('Vox','Mean')
+
+
+first_vox<-merge(first_vox_var,first_vox_mean,by="Vox")
+second_vox<-merge(second_vox_var,second_vox_mean,by="Vox")
+
+vox_tot<-rbind(first_vox,second_vox)
+ggplot(vox_tot,aes(Mean,Var))+geom_point(size=0.01)+ggtitle('CAT12')+theme(axis.text.x=element_text(size=16,face="bold"),axis.text.y=element_text(size=16,face="bold"),axis.title = element_text(size=24,face='bold'),plot.title=element_text(size=24,face='bold'))
+
+
+
+excl_vox<-vox_tot[vox_tot$Mean>0.1 | vox_tot$Var>0.01,]
+
+write.table(excl_vox$Vox,'../vox_to_keep_cat12',row.names=F,col.names=F)
+
+cat<-read.table('../vox_to_keep_cat12',header=F)
+excl_vox<-cat
+colnames(excl_vox)<-'Vox'
+#plot these vox on image to get the mask, we need to pad our image 
+old<-data.frame(vox=seq(1,744175),val=0)
+old[old$vox %in% excl_vox$Vox,'val']<-1
+ar<-array(old$val,dim=c(85,103,85))
+fin<-array(0,dim=c(91,109,91))
+
+for (i in 1:85){
+  for (j in 1:103){
+    for (k in 1:85){
+      fin[i+3,j+3,k+1]=ar[i,j,k]
+    }
+  }
+}
+
+#on prend le padding pour lequel l'intersection entre les 3 masks est la plus grande
+
+writeNIfTI(fin,'../../01GM_Association/FSL_CAT12Vol/Masks/FIN_cat12')
+
+#on veut sauvegarder dans un fichier : deux colonnes:  premiere = valeur des voxels gardés dans espace 1-744175, deuxieme valeur des vox gardés dans espace 1-902629
+espaceFin<-data.frame(vox=c(fin),index=seq(1,902629))
+df_fin<-data.frame(espace1=excl_vox$Vox,espace2=espaceFin[espaceFin$vox==1,'index'])
+write.table(df_fin,'../../02_Multiple_testing/correspVoxCAT12Vol_902929_192483',row.names=F,col.names=F)
+
+#compare intersect voxels with both fsl mask 
+fsl_vbm<-readNIfTI('../test_vbm.nii.gz')
+fsl_anat<-readNIfTI('../test_anat.nii.gz')
+
+df_tot<-data.frame(cat12=c(fin),vbm=c(fsl_vbm),anat=c(fsl_anat),vox=seq(1,902629))
+
+df_inter<-df_tot[df_tot$cat12==1 & df_tot$vbm==1 & df_tot$anat==1,]
+dim(df_inter)
+
+df_reconstruct<-data.frame(vox=seq(1,902629),val=0)
+df_reconstruct[df_reconstruct$vox %in% df_inter$vox,'val']<-1
+
+arr_recon<-array(df_reconstruct$val,dim = c(91,109,91))
+writeNIfTI(arr_recon,'../intersect_proc')
+
+
+```
+
+
+#on garde dans le bod que les voxels du mask
+```{bash, message=FALSE, eval=F}
+
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+
+#--extract then --exclude
+${bind}/qsubshcom " "${bind}"/osca --befile "${wd}"/BodFilesCAT12/UKB_Vol.FinalBod --extract-probe "${wd}"/CAT12/vox_to_keep_cat12 --make-bod --no-fid --out "${wd}"/BodFilesCAT12/UKB_Vol_SubVox " 4 100G Vol_Bod 48:00:00 "--partition=bigmem" 
+
+
+```
+
+
+
+#create two Bod : main and replicate 
+
+```{bash, echo=FALSE,message=FALSE,warning=FALSE,eval=F}
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/lustre/iss02/ukbiobank/software"
+
+cd ${wd}/BodFilesCAT12 
+
+#Extract two subset of probes (main and replicate)
+for hemi in Vol
+do
+for div in  main replicate
+do
+${bind}/qsubshcom " "${bind}"/osca --befile "${wd}"/BodFilesCAT12/UKB_Vol_SubVox --keep "${wd}"/BodFilesCAT12/${div}_id.csv  --make-bod --no-fid --out "${wd}"/BodFilesCAT12/UKB_${hemi}.FinalBod.${div} " 4 128G sub_Bod_cat12_${hemi}.${div} 48:00:00 "--partition=bigmem" 
+done 
+done 
+
+
+```
+
+#BRM
+```{bash, echo=FALSE,message=FALSE,warning=FALSE,eval=F}
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/lustre/iss02/ukbiobank/software"
+
+cd ${wd}
+
+for hemi in Vol 
+do 
+for div in main replicate
+do 
+${bind}/qsubshcom " "${bind}"/osca --befile "${wd}"/BodFilesCAT12/UKB_${hemi}.FinalBod.${div} --make-orm-bin --out "${wd}"/BodFilesCAT12/UKB_${hemi}.FinalBod.${div}.BRM --thread-num 5 " 12 150G cat12_BRM_${div}${hemi} 10:00:00 "--partition=bigmem" 
+done 
+done 
+
+
+${bind}/qsubshcom "${bind}/osca --befile-flist flist_cat12_surf_replicate --make-bod --out UKB_QC_CAT12_Surface.FinalBod.replicate "  12 150G mergeCATrepli 10:00:00 "--partition=bigmem" 
+```
+
+
+#merging BRM for surfaces : careful because Lh Thick and Rh Thick have the same .opi (because they were created separately so both have opi starting with 001, 002 etc)
+#when merging, need to modify one .opi by naming probes starting from 163842
+
+#if needed to padd images 
+```{bash, echo=FALSE,message=FALSE,warning=FALSE,eval=F}
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/lustre/iss02/ukbiobank/software" 
+cd ${wd}
+${bind}/qsubshcom "dat=\$(sed -n \"\${TASK_ID}{p;q}\" ${wd}/Downloadfsl/participants.tsv)|;
+source /network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/code/source_conda|;
+conda activate r_env|;
+Rscript ${wd}/code/padding_cat12.R ${wd}/CAT12/\${dat}/OutputVol/mwp1T1_brain_id.tsv  ${wd}/CAT12/\${dat}/OutputVol/mwp1T1_brain_padded" 1 4G cat12_padding 00:05:00 "-array=15000-24999 --partition=bigmem" 
+
+```
+
+
+#text
+```{bash,eval=F}
+
+wd="/network/iss/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/iss/ukbiobank/software" 
+
+cd ${wd}/BodFilesCAT12
+
+
+${bind}/qsubshcom "${bind}/osca --befile UKB_QC_CAT12_Surface.FinalBod.replicate --extract-probe VoxToKeep -make-bod --out test" 24 100G excludeVertices 10:00:00 "" 
+
+
+```
+
+
+
+
+
+

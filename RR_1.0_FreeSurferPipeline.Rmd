@@ -1,0 +1,638 @@
+---
+title: "FreeSurfer pipeline"
+author: "by Elise Delzant"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  epuRate::PCTG:
+    toc: TRUE
+    number_sections: FALSE
+    code_folding: "show"
+---
+
+#init
+
+
+```{r, echo=FALSE}
+options(width = 60)
+knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 60), tidy = TRUE)
+
+```
+
+# Create bulk file
+
+```{bash, message=FALSE, eval=FALSE}
+
+bind="/network/lustre/iss02/ukbiobank/software" 
+wd="/network/lustre/iss02/ukbiobank/unorganized/unorganized_pheno"
+cd $wd
+${bind}/ukbconv ukb673035.enc_ukb bulk -s20252
+
+```
+
+# Extract first visits (remove imaging second wave)
+
+```{R, message=FALSE, eval=FALSE}
+
+blk=read.table("../ukb673035.bulk", stringsAsFactors = F)
+
+table(blk$V2)
+write.table(blk[-which(blk$V2=="20263_3_0"),], "../ukb673035.20263_2.bulk", col.names = F, row.names = F, quote=F)
+
+```
+
+#Remove unusable subjects (that I gotten through the FSL process (_20252))
+#no need to do that because we will at the end remove all subjects that dont have both T1 
+```{R, message=FALSE, eval=FALSE}
+getwd()
+blk_v2=read.table("../ukb673035.20263_2.bulk",stringsAsFactors = F)
+blk<-read.table('../ukb50815.20263.bulk',stringsAsFactors = F)
+unusable=read.table("../unusable_20252.csv",header=F)
+usables=setdiff(blk_v2$V1,unusable$V1)
+usables=setdiff(blk$V1,unusable$V1)
+
+ukb_usable=blk_v2[blk_v2$V1 %in%usables,]
+ukb_usable=blk[blk$V1 %in%usables,]
+
+dim(ukb_usable)
+write.table(ukb_usable,'../ukb50815_20263_usable.bulk',col.names=F,row.names=F,quote=F)
+
+```
+
+# Create batch bulk files to parallelise the analysis and subbatches
+
+```{bash, message=FALSE, eval=FALSE,tidy.opts = list(width.cutoff = 60), tidy = TRUE}
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+
+cd $wd/Downloadfs
+split -l 1000 ukb50815_20263_usable.bulk ukb50815.20263.bulk.batch --numeric-suffixes=1 
+
+rd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/Downloadfs" # reading directory (created above)
+
+for batch in 43
+do
+# 1) Split ID list of each batch into 8 sublists
+split -l$((`wc -l < ${rd}/ukb50815.20263.bulk.batch${batch}`/8)) ${rd}/ukb50815.20263.bulk.batch${batch} ${rd}/ukb50815.20263.bulk.batch${batch}_subbatch -da 1
+done
+```
+
+# Dowload UKB bulk data - FreeSurfer processing
+
+```{bash, message=FALSE, eval=FALSE}
+
+bind="/network/lustre/iss02/ukbiobank/software" 
+ukb="/network/lustre/iss02/ukbiobank/unorganized/unorganized_pheno" # UKB files
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+
+mkdir -p ${wd}/Downloadfs
+cp ${wd}/ukb50815.20263.bulk ${wd}/Downloadfs/ukb50815.20263.bulk
+cp ${ukb}/k53185r50815.key ${wd}/Downloadfs/k53185r50815.key
+
+#new key 
+cp ${ukb}/k53185r673035.key ${wd}/Downloadfs/k53185r673035.key
+
+
+bind="/network/lustre/iss02/ukbiobank/software" 
+ukb="/network/lustre/iss02/ukbiobank/unorganized/unorganized_pheno" # UKB files
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+
+cd ${wd}/Downloadfs
+bind="/network/lustre/iss02/ukbiobank/software" 
+
+for step in $(seq 42000 1 42275)   # ....
+do 
+${bind}/ukbfetch -bukb50815_20263_usable.bulk -ak53185r673035.key -s${step} -m1
+done 
+
+
+ukbfetch -bukb673035.bulk -s1 -m1000
+ukbfetch -bukb673035.bulk -s1001 -m2000
+ukbfetch -bukb673035.bulk -s2001 -m3000
+
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+
+# Check number of downloaded filesvas ya 
+for batch in {14..} # ...
+do
+for iii in {1..3}
+do
+dat=$(sed -n "${iii}{p;q}" ${rd}/ukb50815.20263.bulk.batch${batch})
+ID=$(echo ${dat} | cut -f 1 -d ' ' ) 
+ls ${wd}/Downloadfs/*${ID}*
+done 
+done
+
+
+```
+
+# Finalise FS processing and perform ENIGMA-shape analysis
+#25 min environ par suj
+```{bash, message=FALSE, eval=FALSE,tidy.opts = list(width.cutoff = 60), tidy = TRUE}
+
+
+# Set environment and run
+bind="/network/lustre/iss02/ukbiobank/software" 
+ukb="/network/lustre/iss02/ukbiobank/unorganized/unorganized_pheno" 
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+rd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/Downloadfs" # reading directory (created above)
+fsdir="/network/lustre/iss01/apps/software/noarch/freesurfer/freesurfer_6.0.0"
+
+mkdir -p ${wd}/FSProcessing
+cd ${rd}
+
+for batch in 43
+do
+${bind}/qsubshcom " dat=\$(sed -n \"\${TASK_ID}{p;q}\" ${rd}/ukb50815.20263.bulk.batch${batch}) |;
+ID=\$(echo \${dat} | cut -f 1 -d ' ' ) |;
+field=\$(echo \${dat} | cut -f 2 -d ' ' ) |;
+echo \${ID} |;
+mkdir -p ${wd}/FSOUTPUT/batch${batch}/FSresults/\${ID}/ |;
+mkdir -p ${wd}/FSOUTPUT/batch${batch}/ENIGMAshapeResults/\${ID}/ |;
+mkdir -p ${wd}/FSProcessing/batch${batch}/\${ID}/ |;
+unzip \${ID}_\${field}.zip -d ${rd}/\${ID} |;
+mv ${rd}/\${ID}/FreeSurfer/* ${wd}/FSProcessing/batch${batch}/\${ID}/ |;
+module load FreeSurfer |; 
+SUBJECTS_DIR="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/FSProcessing/batch${batch}" |;
+"${fsdir}"/bin/recon-all -subject \${ID} -qcache |;
+SUBJECTS_DIR="/network/lustre/iss01/apps/software/noarch/freesurfer/freesurfer_6.0.0/subjects" |; 
+
+for hemi in lh rh |; do |;
+for moda in area thickness |; do |;
+for fwhm in 0 5 10 15 20 25 |; do |;
+"${fsdir}"/bin/mris_convert -c ${wd}/FSProcessing/batch${batch}/\${ID}/surf/\${hemi}.\${moda}.fwhm\${fwhm}.fsaverage.mgh "${fsdir}"/subjects/fsaverage/surf/\${hemi}.orig ${wd}/FSOUTPUT/batch${batch}/FSresults/\${ID}/\${hemi}.\${moda}.fwhm\${fwhm}.fsaverage.asc |;
+done |; 
+for fsav in fsaverage3 fsaverage4 fsaverage5 fsaverage6 |; do |;
+"${fsdir}"/bin/mri_surf2surf --s fsaverage --hemi \${hemi} --sval ${wd}/FSProcessing/batch${batch}/\${ID}/surf/\${hemi}.\${moda}.fwhm0.fsaverage.mgh --trgsubject \${fsav} --tval ${wd}/FSProcessing/batch${batch}/\${ID}/surf/\${hemi}.\${moda}.fwhm0.\${fsav}.mgh |;
+"${fsdir}"/bin/mris_convert -c ${wd}/FSProcessing/batch${batch}/\${ID}/surf/\${hemi}.\${moda}.fwhm0.\${fsav}.mgh "${fsdir}"/subjects/\${fsav}/surf/\${hemi}.orig ${wd}/FSOUTPUT/batch${batch}/FSresults/\${ID}/\${hemi}.\${moda}.fwhm0.\${fsav}.asc |;
+done |;
+done |; done |;
+perl "${bind}"/ENIGMA_shape/MedialDemonsShared/bin/Medial_Demons_shared.pl ${wd}/FSProcessing/batch${batch}/\${ID}/mri/aseg.mgz 10 11 12 13 17 18 26 49 50 51 52 53 54 58 ${wd}/FSProcessing/batch${batch}/\${ID}/ENIGMA_shape/ "${bind}"/ENIGMA_shape/MedialDemonsShared "${fsdir}"/bin |;
+rsync -r ${wd}/FSProcessing/batch${batch}/\${ID}/ENIGMA_shape/* ${wd}/FSOUTPUT/batch${batch}/ENIGMAshapeResults/\${ID}/ |;
+rsync -r ${wd}/FSProcessing/batch${batch}/\${ID}/stats/* ${wd}/FSOUTPUT/batch${batch}/FSresults/\${ID}/ |;
+rm -r ${rd}/\${ID}_\${field}.zip |;
+echo ${rd}/\${ID}_\${field}.zip|;
+rm -r ${rd}/\${ID} |;
+rm -r ${wd}/FSProcessing/batch${batch}/\${ID}|;  
+" 1 4G UKB_batch${batch}_FastProcessing 4:00:00 "--partition=bigmem -array=1-272"
+done
+
+
+# Remove  batches, once the files have been created
+wd="/working/directory"
+for batch in 1
+do
+rm -r ${wd}/FSOUTPUT/batch${batch}/
+rm -r ${wd}/FSProcessing/batch${batch}/
+done
+
+
+
+```
+
+
+# Check progression of processing
+
+```{bash, message=FALSE, eval=FALSE}
+
+# Start interactive job - PBPpro queue
+# qsub -I -l select=1:ncpus=1:mem=5GB -l walltime=05:00:00 -A UQ-IMB-CNSG
+srun -p normal -N 1 -c 1 --mem=5G --time=0-03:00:00 --pty bash # SLURM
+
+wd="/working/directory"
+rd="/working/directory/Download"
+fsdir="/path/to/freesurfer  
+bind="/software/and/binary/directory" 
+cd ${wd}
+
+
+for batch in 1 2 3 4 #..
+do
+rm $wd/FSOUTPUT/IDs_rerun_investigateProcessing_Cortical_batch${batch}.txt
+rm $wd/FSOUTPUT/IDs_rerun_investigateProcessing_Subortical_batch${batch}.txt
+
+for iii in {1..1000}
+do
+dat=$(sed -n "${iii}{p;q}" ${rd}/20263.bulk.batch${batch})
+ID=$(echo ${dat} | cut -f 1 -d ' ' ) 
+echo ${ID}
+nb=$(ls $wd/FSOUTPUT/batch${batch}/FSresults/${ID}/ | wc -l)
+if [ ${nb} -lt 58 ] 
+then
+echo "Cortical processing failed"
+echo ${nb}
+echo ${dat} >> $wd/FSOUTPUT/IDs_rerun_investigateProcessing_Cortical_batch${batch}.txt
+fi
+nb=$(ls $wd/FSOUTPUT/batch${batch}/ENIGMAshapeResults/${ID}/ | wc -l)
+if [ ${nb} -lt 56 ]
+then
+echo "Subortical processing failed"
+echo ${nb}
+echo ${dat} >> $wd/FSOUTPUT/IDs_rerun_investigateProcessing_Subcortical_batch${batch}.txt
+fi
+done
+done
+
+
+```
+
+
+# Create vertex-wise datasets
+
+> Faster version - parallelised
+> Uses first indiv from batch 1 to get the column names
+
+```{bash, message=FALSE, eval=FALSE}
+
+
+#2) Submit jobs on sublists (8x faster)
+bind="/network/lustre/iss02/ukbiobank/software" 
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+rd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/Downloadfs" # reading directory (created above)
+
+for batch in 43 # ...
+do
+cd ${wd}/FSOUTPUT/batch${batch}/FSresults #Get the name of the first folder in the FSoutput/batch 
+first=$(ls -d */ | head -1)
+for hemi in lh rh
+do
+for moda in area thickness
+do
+cd ${wd}/FSProcessing
+echo ${hemi}.${moda}
+${bind}/qsubshcom " echo \"vertexnum\" > ${wd}/FSProcessing/batch${batch}/${hemi}.${moda}.batch${batch}.subbatch\${TASK_ID}.fwhm0.UKB.txt |; 
+awk '{print \$1}' ${wd}/FSOUTPUT/batch${batch}/FSresults/${first}${hemi}.${moda}.fwhm0.fsaverage.asc >> ${wd}/FSProcessing/batch${batch}/${hemi}.${moda}.batch${batch}.subbatch\${TASK_ID}.fwhm0.UKB.txt |; 
+for ID in \$(awk -F\",\" \"NR>0 {print \$1}\" ${rd}/ukb50815.20263.bulk.batch${batch}_subbatch\${TASK_ID}) |;
+do |;
+echo \${ID} |;
+if [ -f ${wd}/FSOUTPUT/batch${batch}/FSresults/\${ID}/${hemi}.${moda}.fwhm0.fsaverage.asc ] |;
+then |;
+echo \${ID} > ${wd}/FSProcessing/batch${batch}/${hemi}.${moda}.\${TASK_ID}.temp.lta |;
+awk '{print \$5}' ${wd}/FSOUTPUT/batch${batch}/FSresults/\${ID}/${hemi}.${moda}.fwhm0.fsaverage.asc >> ${wd}/FSProcessing/batch${batch}/${hemi}.${moda}.\${TASK_ID}.temp.lta |;
+paste ${wd}/FSProcessing/batch${batch}/${hemi}.${moda}.batch${batch}.subbatch\${TASK_ID}.fwhm0.UKB.txt ${wd}/FSProcessing/batch${batch}/${hemi}.${moda}.\${TASK_ID}.temp.lta > ${wd}/FSProcessing/batch${batch}/${hemi}.${moda}.\${TASK_ID}.temp2.lta |;
+cp ${wd}/FSProcessing/batch${batch}/${hemi}.${moda}.\${TASK_ID}.temp2.lta ${wd}/FSProcessing/batch${batch}/${hemi}.${moda}.batch${batch}.subbatch\${TASK_ID}.fwhm0.UKB.txt |;
+fi |; done " 1 4G VertexData_UKB_${hemi}_${moda}_batch${batch} 10:00:00 "-array=0-7"
+done
+done
+done
+
+
+
+# 3) Put back together and remove temp files
+bind="/network/lustre/iss02/ukbiobank/software" 
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+rd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/Downloadfs" # reading directory (created above)
+cd ${wd}/FSProcessing
+qsub -I -l select=1:ncpus=1:mem=5GB -l walltime=05:00:00 -A UQ-IMB-CNSG
+
+for batch in 43 # ...
+do
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/FSProcessing/batch${batch}"
+cd ${wd}
+cp ${wd}/rh.thickness.batch${batch}.subbatch0.fwhm0.UKB.txt ${wd}/rh.thickness.batch${batch}.fwhm0.UKB.txt
+cp ${wd}/lh.thickness.batch${batch}.subbatch0.fwhm0.UKB.txt ${wd}/lh.thickness.batch${batch}.fwhm0.UKB.txt
+cp ${wd}/rh.area.batch${batch}.subbatch0.fwhm0.UKB.txt ${wd}/rh.area.batch${batch}.fwhm0.UKB.txt
+cp ${wd}/lh.area.batch${batch}.subbatch0.fwhm0.UKB.txt ${wd}/lh.area.batch${batch}.fwhm0.UKB.txt
+
+for moda in thickness area
+do
+for hemi in lh rh
+do 
+for subbatch in {1..7}
+do
+ echo ${subbatch}.${hemi}.${moda}.
+# Get rid row names (1st column)
+awk '{$1=""}1' ${wd}/${hemi}.${moda}.batch${batch}.subbatch${subbatch}.fwhm0.UKB.txt | awk '{$1=$1}1' > ${wd}/${hemi}.${moda}.batch${batch}.subbatch${subbatch}.fwhm0.UKB_noColNames.txt
+# Paste to the combined file        
+paste ${wd}/${hemi}.${moda}.batch${batch}.fwhm0.UKB.txt ${wd}/${hemi}.${moda}.batch${batch}.subbatch${subbatch}.fwhm0.UKB_noColNames.txt > ${wd}/${hemi}.${moda}.batch${batch}.fwhm0.UKB.temp.txt
+cp ${wd}/${hemi}.${moda}.batch${batch}.fwhm0.UKB.temp.txt ${wd}/${hemi}.${moda}.batch${batch}.fwhm0.UKB.txt
+rm ${wd}/*temp*
+rm ${wd}/*_noColNames*
+rm ${wd}/*subbatch*
+done
+done
+done 
+done
+
+
+```
+
+## Sub cortical
+
+```{bash, message=FALSE, eval=FALSE}
+
+
+for batch in 43
+do
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/lustre/iss02/ukbiobank/software" 
+
+# Convert tab file of IDs into csv (which ENIGMA shape package prefers)
+cd ${wd}/FSOUTPUT/batch${batch}/ENIGMAshapeResults
+echo "ID,V2" > ${wd}/FSProcessing/batch${batch}/groupfile_UKB.csv 
+for d in `ls -d *` ; do
+    echo ${d},V2 >> ${wd}/FSProcessing/batch${batch}/groupfile_UKB.csv
+done
+
+# Create all subcortical text files
+cd ${wd}/FSProcessing/batch${batch}
+
+${bind}/qsubshcom " groupfile=\"/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/FSProcessing/batch${batch}/groupfile_UKB.csv\" |;
+filename=\$(basename \"\${groupfile}\") |;
+extension=\"\${filename##*.}\" |;
+filename=\"\${filename%.*}\" |;
+echo \${groupfile} |;
+setROIS=\"10 11 12 13 17 18 26\" |;
+${bind}/ENIGMA_shape/MedialDemonsShared/bin/raw_list2CSV_matrix ${wd}/FSProcessing/batch${batch}/\${filename}_LogJacs_lh.csv ${bind}/ENIGMA_shape/MedialDemonsShared/atlas GOF \${setROIS} LogJacs resliced_mesh \${groupfile} ${wd}/FSOUTPUT/batch${batch}/ENIGMAshapeResults |;
+${bind}/ENIGMA_shape/MedialDemonsShared/bin/raw_list2CSV_matrix ${wd}/FSProcessing/batch${batch}/\${filename}_thick_lh.csv ${bind}/ENIGMA_shape/MedialDemonsShared/atlas GOF \${setROIS} thick resliced_mesh \${groupfile} ${wd}/FSOUTPUT/batch${batch}/ENIGMAshapeResults |;
+setROIS=\"49 50 51 52 53 54 58\" |;
+${bind}/ENIGMA_shape/MedialDemonsShared/bin/raw_list2CSV_matrix ${wd}/FSProcessing/batch${batch}/\${filename}_LogJacs_rh.csv ${bind}/ENIGMA_shape/MedialDemonsShared/atlas GOF \${setROIS} LogJacs resliced_mesh \${groupfile} ${wd}/FSOUTPUT/batch${batch}/ENIGMAshapeResults |;
+${bind}/ENIGMA_shape/MedialDemonsShared/bin/raw_list2CSV_matrix ${wd}/FSProcessing/batch${batch}/\${filename}_thick_rh.csv ${bind}/ENIGMA_shape/MedialDemonsShared/atlas GOF \${setROIS} thick resliced_mesh \${groupfile} ${wd}/FSOUTPUT/batch${batch}/ENIGMAshapeResults |;
+sed 's/,\+/ /g' ${wd}/FSProcessing/batch${batch}/\${filename}_LogJacs_lh.csv  > ${wd}/FSProcessing/batch${batch}/\${filename}_LogJacs_lh.txt |;
+sed 's/,\+/ /g' ${wd}/FSProcessing/batch${batch}/\${filename}_LogJacs_rh.csv  > ${wd}/FSProcessing/batch${batch}/\${filename}_LogJacs_rh.txt |;
+sed 's/,\+/ /g' ${wd}/FSProcessing/batch${batch}/\${filename}_thick_lh.csv  > ${wd}/FSProcessing/batch${batch}/\${filename}_thick_lh.txt |;
+sed 's/,\+/ /g' ${wd}/FSProcessing/batch${batch}/\${filename}_thick_rh.csv  > ${wd}/FSProcessing/batch${batch}/\${filename}_thick_rh.txt |;
+awk '\$2 != \"NaN\"' ${wd}/FSProcessing/batch${batch}/groupfile_UKB_LogJacs_lh.txt > ${wd}/FSProcessing/batch${batch}/lh.LogJacs.fwhm0.UKB.txt |;
+awk '\$2 != \"NaN\"' ${wd}/FSProcessing/batch${batch}/groupfile_UKB_LogJacs_rh.txt > ${wd}/FSProcessing/batch${batch}/rh.LogJacs.fwhm0.UKB.txt |;
+awk '\$2 != \"NaN\"' ${wd}/FSProcessing/batch${batch}/groupfile_UKB_thick_lh.txt > ${wd}/FSProcessing/batch${batch}/lh.thick.fwhm0.UKB.txt |;
+awk '\$2 != \"NaN\"' ${wd}/FSProcessing/batch${batch}/groupfile_UKB_thick_rh.txt > ${wd}/FSProcessing/batch${batch}/rh.thick.fwhm0.UKB.txt |;
+" 1 4G VertexData_Subcortical_UKB_batch${batch} 05:00:00 " "
+done
+
+```
+
+
+# Check dimensions of created files
+
+```{bash, message=FALSE, eval=FALSE}
+
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/lustre/iss02/ukbiobank/software" 
+
+# Dimension batch files
+for batch in 14
+do
+echo ${batch}
+cd ${wd}/FSProcessing/batch${batch}
+
+# Dimension merged file
+awk '{print NF}' lh.area.batch${batch}.fwhm0.UKB.txt | sort -nu | tail -n 1 
+awk '{print NF}' rh.area.batch${batch}.fwhm0.UKB.txt | sort -nu | tail -n 1 
+awk '{print NF}' lh.thickness.batch${batch}.fwhm0.UKB.txt | sort -nu | tail -n 1 
+awk '{print NF}' rh.thickness.batch${batch}.fwhm0.UKB.txt | sort -nu | tail -n 1 
+
+# Check final files
+cat lh.LogJacs.fwhm0.UKB.txt | wc -l 
+cat rh.LogJacs.fwhm0.UKB.txt | wc -l 
+cat lh.thick.fwhm0.UKB.txt | wc -l 
+cat rh.thick.fwhm0.UKB.txt | wc -l 
+
+# Number of columns
+cat lh.area.batch${batch}.fwhm0.UKB.txt | wc -l 
+awk '{print NF}' lh.LogJacs.fwhm0.UKB.txt | sort -nu | tail -n 1 
+echo "Done bash ${bash}"
+
+done
+
+```
+
+
+# Import text files in OSCA
+
+```{bash, message=FALSE, eval=FALSE}
+
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/lustre/iss02/ukbiobank/software" 
+
+
+mkdir -p ${wd}/BodFiles
+od="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesFS"
+cd ${wd}/BodFilesFS
+
+for batch in 43
+do
+# Cortical
+for hemi in lh rh
+do
+for moda in area thickness
+do
+${bind}/qsubshcom " ${bind}/osca --tefile ${wd}/FSProcessing/batch${batch}/${hemi}.${moda}.batch${batch}.fwhm0.UKB.txt --make-bod --no-fid --out ${od}/${hemi}.${moda}.batch${batch}.fwhm0.UKB " 1 10G ${hemi}_${moda}_MakeBod 10:00:00 "" 
+done
+done
+done
+
+
+
+# Subcortical - note different output name to match next section
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+
+cd ${wd}/BodFilesFS
+for batch in {07..10} 
+do
+for hemi in lh rh
+do
+for moda in LogJacs thick
+do
+${bind}/qsubshcom " ${bind}/osca --efile ${wd}/FSProcessing/batch${batch}/${hemi}.${moda}.fwhm0.UKB.txt --make-bod --no-fid --out ${od}/${hemi}.${moda}.batch${batch}.fwhm0.UKB.vertexQC " 1 5G ${hemi}_${moda}_MakeBod 04:00:00 "" 
+done
+done 
+done
+
+
+cd ${wd}/BodFilesFS
+for batch in 43
+do
+for hemi in lh rh
+do
+for moda in LogJacs thick
+do
+${bind}/osca --tefile ${wd}/FSProcessing/batch${batch}/${hemi}.${moda}.fwhm0.UKB.txt --make-bod --no-fid --out ${od}/${hemi}.${moda}.batch${batch}.fwhm0.UKB.vertexQC  
+done
+done 
+done
+```
+
+
+#for subcortical values, data are transposed (.opi with id, .oii with probes) --> re transpose data in right way
+#convert bod in text, transpose, and re convert in bod
+
+```{bash, message=FALSE, eval=FALSE}
+
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/lustre/iss02/ukbiobank/software" 
+
+od="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesFS"
+
+cd ${wd}/BodFilesFS
+
+for batch in {01..43}
+do
+for hemi in lh rh
+do
+for moda in thick LogJacs
+do
+${bind}/qsubshcom " ${bind}/osca --befile ${od}/${hemi}.${moda}.batch${batch}.fwhm0.UKB.vertexQC --make-tefile --no-fid --out ${od}/${hemi}.${moda}.batch${batch}.fwhm0.UKB.vertexQC.txt " 1 5G ${hemi}_${moda}_MakeFile 04:00:00 "" 
+done
+done 
+done 
+
+#re transpose to bodfiles transposed
+
+for batch in {01..43}
+do
+for hemi in rh 
+do
+for moda in thick LogJacs
+do
+${bind}/qsubshcom "${bind}/osca --efile ${od}/${hemi}.${moda}.batch${batch}.fwhm0.UKB.vertexQC.txt --make-bod --no-fid --out ${od}/${hemi}.${moda}.batch${batch}.fwhm0.UKB.vertexQC_transp " 1 5G ${hemi}_${moda}_MakeBodTransp 04:00:00 "" 
+done
+done 
+done 
+
+
+```
+
+
+
+
+
+# Delete OUTPUT folders that have been tarred up
+
+```{bash, message=FALSE, eval=FALSE}
+
+for batch in 43
+do
+echo ${batch}
+rm -r /network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/FSOUTPUT/batch${batch}
+rm -r /network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/FSProcessing/batch${batch}
+
+done
+
+
+```
+
+#exclude vertices outside of the cortex 
+
+```{bash, message=FALSE, eval=FALSE}
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/lustre/iss02/ukbiobank/software" 
+
+od="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesFS"
+cd ${wd}/BodFilesFS
+
+
+for batch in {01..43}
+do
+for hemi in lh rh
+do
+for moda in thickness area
+do
+${bind}/qsubshcom " "${bind}"/osca --befile "${wd}"/BodFilesFS/"${hemi}"."${moda}".batch${batch}.fwhm0.UKB --exclude-probe "${wd}"/BodFilesFS/VerticesToExclude_"${hemi}"_"${moda}"_Cortex.txt --make-bod --out "${wd}"/BodFilesFS/"${hemi}"."${moda}".batch${batch}.fwhm0.UKB.vertexQC " 1 10G ${hemi}_${moda}_excludeVertices 10:00:00 "" 
+done
+done 
+done
+```
+
+#merging all bod from all batches
+
+```{bash, message=FALSE, eval=FALSE}
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/lustre/iss02/ukbiobank/software" 
+
+od="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesFS"
+cd ${wd}/BodFilesFS
+
+for hemi in lh rh 
+do
+for moda in thick LogJacs
+do
+${bind}/qsubshcom "${bind}/osca --befile-flist mybodFS.flist.${hemi}.${moda} --make-bod --out ._${hemi}.${moda}.fwhm0.vertexQC " 1 50G ${hemi}_${moda}_merge_batch 10:00:00 "--partition=bigmem" 
+done
+done
+
+
+
+```
+
+#divide into main and replicate 
+
+```{bash, message=FALSE, eval=FALSE}
+
+wd="/network/iss/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/iss/ukbiobank/software" 
+
+od="/network/iss/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesFS"
+
+cd ${wd}/BodFilesFS
+
+for hemi in lh 
+do
+for moda in thickness 
+#for moda in 
+do
+for div in main replicate 
+do
+${bind}/qsubshcom " "${bind}"/osca --befile "${wd}"/BodFilesFS/Bod_${hemi}.${moda}.fwhm0.vertexQC --keep "${wd}"/BodFilesFSL/${div}_id.csv  --make-bod --no-fid --out "${wd}"/BodFilesFS/UKB_FS_${hemi}.${moda}.FinalBod.${div} " 4 128G Bod_${fsl}.${div} 48:00:00 "" 
+done
+done
+done
+
+```
+
+
+#BRM
+```{bash, message=FALSE, eval=FALSE}
+wd="/network/iss/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/iss/ukbiobank/software" 
+
+cd ${wd}/BodFilesFS
+
+for hemi in lh rh 
+do
+for moda in thickness area thick LogJacs
+do
+for div in replicate
+do
+${bind}/qsubshcom " ${bind}/osca --befile ${wd}/BodFilesFS/UKB_FS_${hemi}.${moda}.FinalBod.${div} --make-orm-bin --out ${wd}/BRM_Vol/UKB_FS_${hemi}.${moda}.FinalBod.${div}.BRM --thread-num 5 " 1 120G FSL_BRM_calculation 24:00:00 "" 
+done 
+done 
+done 
+
+```
+
+##Merging (left and right hemisphere for each modality)
+
+```{bash, message=FALSE,eval=FALSE}
+
+wd="/network/iss/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/iss/ukbiobank/software" 
+
+cd ${wd}/BRM_Vol
+
+for div in main
+do
+for moda in thickness area 
+do
+${bind}/qsubshcom "${bind}/osca --multi-orm ${moda}_${div} --make-orm-bin --out UKB_FS_${moda}.FinalBod.${div}.BRM " 1 50G Merge_BRM_FS 10:00:00 " "
+done 
+done
+
+```
+
+#Merging all modalities 
+
+```{bash, message=FALSE,eval=FALSE}
+
+wd="/network/iss/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/iss/ukbiobank/software" 
+
+cd ${wd}/BRM_Vol
+
+for div in main replicate
+do
+${bind}/qsubshcom "${bind}/osca --multi-orm all_moda_fs_${div} --make-orm-bin --out UKB_FS_all_moda.FinalBod.${div}.BRM " 1 50G Merge_BRM_FS 10:00:00 ""
+done 
+
+
+```
+
+
+

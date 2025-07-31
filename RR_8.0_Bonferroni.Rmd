@@ -1,0 +1,843 @@
+---
+title: "Multiple testing"
+author: "by Elise Delzant"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+---
+
+```{r, echo=FALSE}
+options(width = 60)
+knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 60), tidy = TRUE)
+
+```
+
+Create 100 random traits for each processing and each method (100*6*2)
+```{r, message=FALSE, warning=FALSE,eval=F}
+load('../01GM_Association/Data/main.Rdata')
+load('../01GM_Association/Data/replicate.Rdata')
+ids_rm<-read.table('../01GM_Association/BRM/id_QC_rm')
+main<-main[!(main$ID %in% ids_rm$V1),]
+replicate<-replicate[!(replicate$ID %in% ids_rm$V1),]
+
+
+set.seed(123)
+for (elem in 1:100){
+    df<-data.frame(ID1=main$ID,ID2=main$ID)
+    samp<-rnorm(23183)
+    df$sample<-samp
+    df$ID1<-as.factor(df$ID1)
+    df$ID2<-as.factor(df$ID2)
+    name<-paste('random_pheno','main',elem,sep="_")
+    write.table(df,paste('Random_traits',name,sep='/'),col.names=F,row.names=F,quote=FALSE)
+    }
+  
+#we add 400 more other traits 
+set.seed(45)
+for (elem in 101:500){
+    df<-data.frame(ID1=main$ID,ID2=main$ID)
+    samp<-rnorm(23183)
+    df$sample<-samp
+    df$ID1<-as.factor(df$ID1)
+    df$ID2<-as.factor(df$ID2)
+    name<-paste('random_pheno','main',elem,sep="_")
+    write.table(df,paste('Random_traits',name,sep='/'),col.names=F,row.names=F,quote=FALSE)
+}
+
+#we add 500 more
+set.seed(70)
+for (elem in 501:1000){
+    df<-data.frame(ID1=main$ID,ID2=main$ID)
+    samp<-rnorm(23183)
+    df$sample<-samp
+    df$ID1<-as.factor(df$ID1)
+    df$ID2<-as.factor(df$ID2)
+    name<-paste('random_pheno','main',elem,sep="_")
+    write.table(df,paste('Random_traits',name,sep='/'),col.names=F,row.names=F,quote=FALSE)
+}
+```
+
+#First we need to create UKB_QC Bod Files 
+
+```{bash, message=FALSE, warning=FALSE,eval=F}
+
+###FSL
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesFSL"
+bind="/network/lustre/iss02/ukbiobank/software"
+ids="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BRM_Vol"
+
+cd ${wd}
+
+for proc in Anat Vbm 
+do 
+for div in main replicate
+do 
+${bind}/qsubshcom "${bind}/osca --befile UKB_${proc}.FinalBod.${div} --remove ${ids}/id_QC_rm --make-bod --out UKB_QC_${proc}.FinalBod.${div}|;
+" 1 40G ${div}_${proc}_QC_Bod 04:00:00 ""
+done
+done 
+
+##CAT12
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesCAT12"
+bind="/network/lustre/iss02/ukbiobank/software"
+ids="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BRM_Vol"
+
+cd ${wd}
+for proc in Vol Lh.Thick Rh.Thick
+do 
+for div in main replicate
+do 
+${bind}/qsubshcom "${bind}/osca --befile UKB_${proc}.FinalBod.${div} --remove ${ids}/id_QC_rm --make-bod --out UKB_QC_${proc}.FinalBod.${div}|;
+" 1 40G ${div}_${proc}_QC_Bod 04:00:00 ""
+done
+done 
+
+
+###FREESURFER
+wd="/network/iss/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/iss/ukbiobank/software" 
+ids="/network/iss/ukbiobank/ukbiobank-remaining/elise.delzant/BRM_Vol"
+
+cd ${wd}/BodFilesFS
+
+for hemi in lh
+do
+for moda in thickness 
+do
+for div in replicate main
+do
+${bind}/qsubshcom " ${bind}/osca --befile ${wd}/BodFilesFS/UKB_FS_${hemi}.${moda}.FinalBod.${div} --remove ${ids}/id_QC_rm --make-bod --out UKB_QC_FS_${hemi}.${moda}.FinalBod.${div}|;
+" 1 40G ${div}_${hemi}_${moda}_QC_Bod 04:00:00 ""
+done
+done 
+done
+
+
+
+```
+
+#for surface-based processing, merging both hemisphere bod files just created 
+
+#CAT 12 merging BRM for surfaces : careful because Lh Thick and Rh Thick have the same .opi (because they were created separately so both have opi starting with 001, 002 etc)
+#when merging, need to modify one .opi by naming probes starting from 163842
+#in my case i transformed Lh Hemi vertices value to 16842 16843 ...
+
+#same for freesurfer
+
+
+###1st : remove vertices to exclude for each hemisphere
+###2nd : replacing opis name for one of the hemisphere
+###3rd: merge hemisphere
+
+
+
+```{bash, message=FALSE, warning=FALSE,eval=F}
+
+wd="/network/iss/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesCAT12"
+bind="/network/iss/ukbiobank/software"
+
+
+cd ${wd}
+#need to remove vertices to exclude (list given by baptiste) for CAT12
+
+
+for div in replicate
+do
+${bind}/qsubshcom "${bind}/osca --befile UKB_QC_Rh.Thick.FinalBod.${div} --exclude-probe VerticesToExclude_rh_thickness_Cortex.txt --make-bod --out UKB_QC_CAT12_Surface_Rh.FinalBod.${div}|;
+" 1 40G ${div}_QC_Bod_Rh 04:00:00 ""
+done
+
+for div in replicate 
+do
+${bind}/qsubshcom "${bind}/osca --befile UKB_QC_Lh.Thick.FinalBod.${div} --exclude-probe VerticesToExclude_lh_thickness_Cortex.txt --make-bod --out UKB_QC_CAT12_Surface_Lh.FinalBod.${div}|;
+" 1 40G ${div}_QC_Bod_Lh 04:00:00 ""
+done
+
+#rename .opi file dans R
+#in rh thick, 149 926 probes. pour lh.thick on additionne +149 926
+
+#merge Lh and Rh hemi
+wd="/network/iss/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesCAT12"
+bind="/network/iss/ukbiobank/software"
+ids="/network//iss/ukbiobank/ukbiobank-remaining/elise.delzant/BRM_Vol"
+
+cd ${wd}
+
+for div in replicate
+do 
+${bind}/qsubshcom "${bind}/osca --befile-flist flist_cat12_surf_${div} --make-bod --out UKB_QC_CAT12_Surface.FinalBod.${div}|;
+" 1 40G ${div}_QC_Bod 08:00:00 ""
+done
+
+
+
+
+
+###FREESURFER : first, same as for cat12, need to re create .opi with different probes names
+###FREESURFER : merging all modalities for Freesurfer all moda, and merging only right and left hemisphere thickness for FreeSurfer Thickness
+wd="/network/iss/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesFS"
+bind="/network/iss/ukbiobank/software"
+
+cd ${wd}
+
+for div in main replicate
+do 
+for moda in All_moda
+do
+${bind}/qsubshcom "${bind}/osca --befile-flist flist_FS_${moda}_${div} --make-bod --out UKB_QC_FS_${moda}.FinalBod.${div}|;
+" 1 40G ${div}_QC_Bod 10:00:00 ""
+done
+done
+
+
+
+```
+
+#LR model
+
+```{bash, message=FALSE, warning=FALSE,eval=F}
+
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BRM_Vol"
+bind="/network/lustre/iss02/ukbiobank/software"
+fsl="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesFSL"
+cat12="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesCAT12"
+fs="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesFS"
+
+cd $wd 
+
+#LINEAR MODEL ok 
+#pour Anat_rank_norm --> covar_discr_Anat
+
+for proc in CAT12_Volume
+do
+for div in main 
+do 
+for seq in 917 918
+do
+${bind}/qsubshcom "${bind}/osca --befile ${cat12}/UKB_QC_Vol.FinalBod.main  --pheno Random_traits/random_pheno_${div}_${seq}  --covar covar_discr_${div} --qcovar covar2_quant_Vol_body_size_${div} --linear --out Random_traits/Results/${proc}/resu_${proc}_LR_${seq}|;
+" 4 40G ${proc}_${seq} 01:30:00 ""
+done 
+done 
+done 
+
+#We do this for FS_rh.area, FS_lh.area, FS_Thick_LogJacs (previously need to merge lh thick, rh thick, lh logjacs and rh logjacs  bods)
+#dont forget to rename probes (.opi) otherwise in rh and lh they have same names for thickness and area
+for proc in FS_All_moda_rank_norm
+do
+for div in main 
+do 
+for seq in $(seq 1 1 1000)
+do
+${bind}/qsubshcom "${bind}/osca --befile ${fs}/UKB_QC_${proc}.FinalBod.${div} --pheno Random_traits/random_pheno_${div}_${seq}  --covar covar_discr_${div} --qcovar covar2_quant_fs_body_size_${div} --linear --out Random_traits/Results/${proc}/resu_${proc}_${seq}|;
+" 4 150G ${div}_${proc}_${seq} 02:30:00 "--partition=bigmem"
+done 
+done 
+done 
+
+
+
+#pour adj probe rank norm 
+
+
+for proc in FS_All_moda
+do
+for div in main 
+do 
+for method in adj_probe.rank_norm
+do
+for seq in $(seq 501 1 1000)
+do
+${bind}/qsubshcom "${bind}/osca --befile ${fs}/UKB_QC_${proc}.${method}  --pheno Random_traits/random_pheno_${div}_${seq} --linear --out Random_traits/Results/${proc}.${method}/resu_${proc}_${method}_LR_${seq}|;
+" 4 150G ${proc}_${seq} 01:30:00 "--partition=bigmem"
+done 
+done 
+done 
+done
+
+```
+
+#for FS, merge FS_thickness FS_lh_area, FS_rh_area, FS_Thick_LogJacs (because osca was not able to merge all bods, so we did the LR analysis separately)
+
+```{R, message=FALSE, warning=FALSE,eval=F}
+for (i in seq(441,500)){
+  print(i)
+  thickness=paste('resu_FS_Thickness_LR_main_',i,'.linear',sep='')
+  lh_area=paste('resu_FS_lh.area_LR_main_',i,'.linear',sep='')
+  rh_area=paste('resu_FS_rh.area_LR_main_',i,'.linear',sep='')
+  logjacs<-paste('resu_FS_Thick_LogJacs_LR_main_',i,'.linear',sep='')
+  all_moda<-paste('resu_FS_All_Moda_LR_main_',i,'.linear',sep='')
+  th<-read.table(thickness,header=F)
+  lh<-read.table(lh_area,header=F)
+  rh<-read.table(rh_area,header=F)
+  log<-read.table(logjacs,header=F)
+  lh<-lh[-c(1),]
+  rh<-rh[-c(1),]
+  log<-log[-c(1),]
+  tab<-rbind(th,lh,rh,log)
+  write.table(tab,all_moda,row.names=F,col.names=F)
+}
+
+```
+
+#read .linear
+#paralleliser 
+```{bash, message=FALSE, warning=FALSE,eval=F}
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BRM_Vol/Random_traits/Results"
+bind="/network/lustre/iss02/ukbiobank/software"
+cd ${wd}
+
+for proc in FS_Thickness.adj_probe.rank_norm
+do 
+for N in 40 50 55 60 65 70 75 80 90 100 105 110 115 120 125 130 135 140 145 150 155 160 165 170 175 180 185 190 195 200 220 240 260 280 184.637 181.544 192.483 299.881 654.002
+do
+for model in LR
+do
+${bind}/qsubshcom "module load R/4.1.2|;
+Rscript "1_1_Bonferroni.R" ${proc} ${N} ${model} " 1 4G Bonf_${proc}_${N} 02:00:00 ""
+done
+done
+done
+
+#sinon on prend 1_1_Bonferroni.R (la difference= nom du fichier il y a 'main' dedans, alors que pr rank norm non)
+#il y a aussi 1_1_Bonferroni2.R --> percent_kurt5
+### pour info
+#nvox_anat=184637
+#nvox_vbm=181544
+#nvox_cat12=192483
+#nvox_cat12_surf=299881
+#nvox_fs=654002
+###
+
+
+```
+
+#to merge all results into one file per processing
+```{R, message=FALSE, warning=FALSE,eval=F}
+library(data.table)
+N=c(50,55,60,65,70,75,80,90,100,105,110,115,120,125,130,135,140,145,150,155,160,165,170,175,180,185,190,195,200,220,240,260,280,184.637,181.544,192.483,299.881,654.002) 
+
+
+pval=0.05/c(N)
+#we do this for all proc. can also make a loop 
+proc='FS_Thickness'
+path1=paste('pval','40',proc,'LR',sep='_')
+df_fin=read.table(path1)
+for (n in N){
+  path_tab<-paste('pval',as.character(n),proc,'LR',sep='_')
+  tab<-read.table(path_tab)
+  df_fin=rbind(df_fin,tab)
+}
+df_fin$N<-c(40,N)*1000
+write.table(df_fin,'tab_fin_pval_FS_Thickness_LR_1000',row.names=F,col.names=F)
+
+
+```
+
+get minimal pvalue per voxel per processing
+```{bash, message=FALSE, warning=FALSE,eval=F}
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BRM_Vol/Random_traits/Results"
+bind="/network/lustre/iss02/ukbiobank/software"
+cd ${wd}
+
+ 
+ 
+for proc in FS_Thickness_adj_probe.rank_norm
+do
+for model in LR
+do
+${bind}/qsubshcom "module load R/4.1.2|;
+Rscript "pvalmin.R" ${proc} ${N} ${model} " 4 12G pvalmin_${proc} 04:00:00 "--partition=bigmem"
+done
+done
+
+```
+
+get minimal pvalue per trait per processing
+```{bash, message=FALSE, warning=FALSE,eval=F}
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BRM_Vol/Random_traits/Results"
+bind="/network/lustre/iss02/ukbiobank/software"
+cd ${wd}
+
+ 
+ 
+for proc in CAT12_Volume_adj_probe.rank_norm
+do
+for model in LR
+do
+${bind}/qsubshcom "module load R/4.1.2|;
+Rscript "minpval_traitsGlobal.R" ${proc} ${model} " 4 12G minTraits_${proc} 04:00:00 "--partition=bigmem"
+done
+done
+
+
+
+for proc in FS_Thickness_adk_probe.rank_norm
+do
+for model in LR
+do
+${bind}/qsubshcom "module load R/4.1.2|;
+Rscript "minpval_traits_surface.R" ${proc} ${model} " 4 40G minTraits_${proc} 04:00:00 ""
+done
+done
+```
+
+get minimal pvalue distribution per processing across all traits (1000 pval, for each 10000 val)
+```{bash, message=FALSE, warning=FALSE,eval=F}
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BRM_Vol/Random_traits/Results"
+bind="/network/lustre/iss02/ukbiobank/software"
+cd ${wd}
+
+ 
+ 
+for proc in FS_Thickness_adj_probe.Rank
+do
+for model in LR
+do
+${bind}/qsubshcom "module load R/4.1.2|;
+Rscript "Distrib_minpval.R" ${proc} ${model} " 4 12G distribPval_${proc} 04:00:00 ""
+done
+done
+
+
+```
+
+#Results 
+```{R, message=FALSE, warning=FALSE,eval=F}
+library(ggplot2)
+library(dplyr)
+library(hrbrthemes)
+
+
+df_anat_lr<-read.table('Results/tab_fin_pval_Anat_LR_1000')
+df_anat_lr$V2<-df_anat_lr$V2/10
+
+df_anat_rank_norm_lr<-read.table('Results/tab_fin_pval_Anat_rank_norm_LR_1000')
+df_anat_rank_norm_lr$V2<-df_anat_rank_norm_lr$V2/10
+
+df_vbm_lr<-read.table('Results/tab_fin_pval_Vbm_LR_1000')
+df_vbm_lr$V2<-df_vbm_lr$V2/10
+
+df_vbm_rank_norm_lr<-read.table('Results/tab_fin_pval_Vbm_rank_norm_LR_1000')
+df_vbm_rank_norm_lr$V2<-df_vbm_rank_norm_lr$V2/10
+
+df_cat12_vol_lr<-read.table('Results/tab_fin_pval_CAT12_Volume_LR_1000')
+df_cat12_vol_lr$V2<-df_cat12_vol_lr$V2/10
+
+df_cat12_vol_rank_norm_lr<-read.table('Results/tab_fin_pval_CAT12_Volume_rank_norm_LR_1000')
+df_cat12_vol_rank_norm_lr$V2<-df_cat12_vol_rank_norm_lr$V2/10
+
+
+df_cat12_surf_lr<-read.table('Results/tab_fin_pval_CAT12_Surface_LR_1000')
+df_cat12_surf_lr$V2<-df_cat12_surf_lr$V2/10
+
+df_cat12_surf_rank_norm_lr<-read.table('Results/tab_fin_pval_CAT12_Surface_rank_norm_LR_1000')
+df_cat12_surf_rank_norm_lr$V2<-df_cat12_surf_rank_norm_lr$V2/10
+
+df_fs_thick_lr<-read.table('Results/tab_fin_pval_FS_Thickness_LR_1000')
+df_fs_thick_lr$V2<-df_fs_thick_lr$V2/10
+
+df_fs_thick_rank_norm_lr<-read.table('Results/tab_fin_pval_FS_Thickness_rank_norm_LR_1000')
+df_fs_thick_rank_norm_lr$V2<-df_fs_thick_rank_norm_lr$V2/10
+
+df_fs_all_lr<-read.table('Results/tab_fin_pval_FS_All_moda_LR_1000')
+df_fs_all_lr$V2<-df_fs_all_lr$V2/10
+
+#df_fs_all_rank_norm_lr<-read.table('Results/tab_fin_pval_FS_All_Moda_rank_norm_LR_500')
+#df_fs_all_rank_norm_lr$V2<-df_fs_all_rank_norm_lr$V2/5
+
+
+
+colnames(df_anat_lr)<-c('alpha','FSLAnat_LR','N')
+colnames(df_anat_rank_norm_lr)<-c('alpha','FSLAnat_rank_norm_LR','N')
+
+colnames(df_vbm_lr)<-c('alpha','FSLVbm_LR','N')
+colnames(df_vbm_rank_norm_lr)<-c('alpha','FSLVbm_rank_norm_LR','N')
+
+colnames(df_cat12_vol_lr)<-c('alpha','CAT12_Volume_LR','N')
+colnames(df_cat12_vol_rank_norm_lr)<-c('alpha','CAT12_Volume_LR','N')
+
+colnames(df_cat12_surf_lr)<-c('alpha','CAT12_Surface_LR','N')
+colnames(df_cat12_surf_rank_norm_lr)<-c('alpha','CAT12_Surface_rank_norm_LR','N')
+
+colnames(df_fs_thick_lr)<-c('alpha','FS_Thick_LR','N')
+colnames(df_fs_thick_rank_norm_lr)<-c('alpha','FS_Thick_rank_norm_LR','N')
+
+colnames(df_fs_all_lr)<-c('alpha','FS_All_LR','N')
+
+
+df_anat_lr$Proc<-'FSLANAT'
+df_anat_rank_norm_lr$Proc<-'FSLANAT'
+df_anat_lr$Method<-'Classic'
+df_anat_rank_norm_lr$Method<-'Rank Norm'
+
+df_vbm_lr$Proc<-'FSLVBM'
+df_vbm_rank_norm_lr$Proc<-'FSLVBM'
+df_vbm_lr$Method<-'Classic'
+df_vbm_rank_norm_lr$Method<-'Rank Norm'
+
+df_cat12_vol_lr$Proc<-'CAT12 Volume'
+df_cat12_vol_rank_norm_lr$Proc<-'CAT12 Volume'
+df_cat12_vol_lr$Method<-'Classic'
+df_cat12_vol_rank_norm_lr$Method<-'Rank Norm'
+
+
+df_cat12_surf_lr$Proc<-'CAT12 Surface'
+df_cat12_surf_rank_norm_lr$Proc<-'CAT12 Surface'
+df_cat12_surf_lr$Method<-'Classic'
+df_cat12_surf_rank_norm_lr$Method<-'Rank Norm'
+
+
+df_fs_thick_lr$Proc<-'FreeSurfer Cortical Thickness'
+df_fs_thick_rank_norm_lr$Proc<-'FreeSurfer Cortical Thickness'
+df_fs_thick_lr$Method<-'Classic'
+df_fs_thick_rank_norm_lr$Method<-'Rank Norm'
+
+df_fs_all_lr$Proc<-'FreeSurfer All Modalities'
+df_fs_all_lr$Method<-'Classic'
+
+
+colnames(df_anat_lr)<-c('alpha','Nb_FP','N','Proc','Method')
+colnames(df_anat_rank_norm_lr)<-c('alpha','Nb_FP','N','Proc','Method')
+
+colnames(df_vbm_lr)<-c('alpha','Nb_FP','N','Proc','Method')
+colnames(df_vbm_rank_norm_lr)<-c('alpha','Nb_FP','N','Proc','Method')
+
+colnames(df_cat12_vol_lr)<-c('alpha','Nb_FP','N','Proc','Method')
+colnames(df_cat12_vol_rank_norm_lr)<-c('alpha','Nb_FP','N','Proc','Method')
+
+colnames(df_cat12_surf_lr)<-c('alpha','Nb_FP','N','Proc','Method')
+colnames(df_cat12_surf_rank_norm_lr)<-c('alpha','Nb_FP','N','Proc','Method')
+
+colnames(df_fs_thick_lr)<-c('alpha','Nb_FP','N','Proc','Method')
+colnames(df_fs_thick_rank_norm_lr)<-c('alpha','Nb_FP','N','Proc','Method')
+
+colnames(df_fs_all_lr)<-c('alpha','Nb_FP','N','Proc','Method')
+
+
+df_tot<-rbind(df_anat_lr,df_anat_rank_norm_lr,df_vbm_lr,df_vbm_rank_norm_lr,df_cat12_vol_lr,df_cat12_vol_rank_norm_lr,df_cat12_surf_lr,df_cat12_surf_rank_norm_lr,df_fs_thick_lr,df_fs_thick_rank_norm_lr,df_fs_all_lr)
+
+#df_tot<-rbind(df_anat_lr,df_vbm_lr,df_cat12_vol_lr,df_cat12_surf_lr,df_fs_thick_lr,df_fs_all_lr)
+df_tot$log_alpha<--log10(df_tot$alpha)
+
+df_tot$Nb_FP<-as.numeric(df_tot$Nb_FP)/100
+df_tot$Proc<-as.factor(df_tot$Proc)
+df_tot$N<-df_tot$N/1000
+
+#nvox_anat=184637
+#nvox_vbm=181544
+#nvox_cat12=192483
+#nvox_cat12_surf=299881
+#nvox_fs=654002
+
+df_bonferroni<-df_tot[(df_tot$Proc=="FSLANAT" & df_tot$N==184.637)  | (df_tot$Proc=="FSLVBM" & df_tot$N==181.544) | (df_tot$Proc=="CAT12 Volume" & df_tot$N==192.483) | (df_tot$Proc=="CAT12 Surface" & df_tot$N==299.881) | (df_tot$Proc=="FreeSurfer Cortical Thickness" & df_tot$N==299.881) | (df_tot$Proc=="FreeSurfer All Modalities" & df_tot$N==654.002),]
+
+df_tot$se_high<-df_tot$Nb_FP+0.02*df_tot$Nb_FP #pour 500 traits: sqrt(0.05*0.95/500)*1.96
+df_tot$se_low<-df_tot$Nb_FP-0.02*df_tot$Nb_FP
+
+#df_tot$Processing<-factor(df_tot$Proc,levels=c('FSLVBM','FSLVBM_rank_norm','FSLANAT','FSLANAT_rank_norm','CAT12 Volume','CAT12 Volume_rank_norm','CAT12 Surface','CAT12 Surface_rank_norm','FreeSurfer Cortical Thickness','FreeSurfer All Modalities'))
+
+df_tot$Processing<-factor(df_tot$Proc,levels=c('FSLVBM','FSLANAT','CAT12 Volume','CAT12 Surface','FreeSurfer Cortical Thickness','FreeSurfer All Modalities'))
+
+df_tot$Method<-as.factor(df_tot$Method)
+
+#plot: Nb FP en fonction de log alpha pour LR
+library(ggplot2)
+
+
+ggplot(data=df_tot,aes(x=log_alpha,y=Nb_FP,colour=Processing)) +scale_color_manual(values=c('#9CCC65','yellow','#26A69A','#EC407A','#5C6BC0','#512DA8')) +geom_line(linewidth=0.7)+scale_linetype_manual(values=c('solid','dashed'))+ geom_hline(yintercept = 0.05,linewidth=1.5,color='black')+ylab('FWER')+xlab('-log10(alpha)')+geom_point(data=df_bonferroni,aes(x=log_alpha,y=Nb_FP),colour='black',size=3) 
+
+
+df_tot2<-df_tot[df_tot$Method=='Classic',]
+df_bonferroni<-df_bonferroni[df_bonferroni$Method=='Classic',]
+ggplot(data=df_tot2,aes(x=log_alpha,y=Nb_FP,colour=Processing)) +scale_color_manual(values=c('#9CCC65','yellow','#26A69A','#EC407A','#5C6BC0','#512DA8')) +geom_line(linewidth=1.4) +geom_point(alpha=0.5,size=2)+ geom_hline(yintercept = 0.05,linewidth=1.5,linetype="dotted",color='black')+ylab('FWER')+xlab('-log10(alpha)')+geom_point(data=df_bonferroni,aes(x=log_alpha,y=Nb_FP),colour='black',size=5) + geom_ribbon(aes(ymin=se_high, ymax=se_low,fill=Processing),alpha = 0.3,linetype=0)+ theme(axis.text.x=element_text(size=30,face="bold"),axis.text.y=element_text(size=30,face="bold"),legend.text =element_text(size=30,face="bold"),axis.title.x = element_text(size=30,face="bold"),axis.title.y = element_text(size=30,face="bold"),legend.title = element_text(size=30,face="bold"))+theme(legend.position=c(0.7,0.8))+scale_fill_manual(values=c('#9CCC65','yellow','#26A69A','#EC407A','#5C6BC0','#512DA8'))+theme(panel.background = element_blank(),panel.grid = element_line(colour="grey"))
+```
+
+do it again but --rank normalized
+```{bash,eval=F}
+
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BRM_Vol"
+bind="/network/lustre/iss02/ukbiobank/software"
+cat12="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesCAT12"
+fsl="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesFSL"
+fs="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesFS"
+
+cd ${fsl}
+
+for proc in Anat 
+do
+for div in main 
+do 
+${bind}/qsubshcom "${bind}/osca --befile UKB_QC_${proc}.FinalBod.${div}.adj_probe --rint-probe --make-bod --out UKB_QC_${proc}.FinalBod.${div}.adj_probe.rank_norm|;
+" 8 150G ${proc}_Norm 120:00:00 "--partition=bigmem"
+done
+done 
+
+
+
+cd ${wd}
+for proc in Vbm_rank_norm
+do
+for div in main 
+do 
+for seq in $(seq 1 1 500)
+do
+${bind}/qsubshcom "${bind}/osca --befile ${fsl}/UKB_QC_${proc}.FinalBod.${div} --pheno Random_traits/random_pheno_${div}_${seq}  --covar covar_discr_${div} --qcovar covar2_quant_Vbm_body_size_${div} --linear --out Random_traits/Results/${proc}/resu_${proc}_LR_${div}_${seq}|;
+" 4 90G ${div}_${proc}_${seq} 02:30:00 "--partition=bigmem"
+done 
+done 
+done 
+
+
+#NEW TEST : on adj--probe avant de rank normaliser
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BRM_Vol"
+bind="/network/lustre/iss02/ukbiobank/software"
+cat12="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesCAT12"
+fsl="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesFSL"
+fs="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesFS"
+
+cd ${wd}
+
+for proc in CAT12_Volume
+do
+for div in main 
+do 
+${bind}/qsubshcom "${bind}/osca --befile ${cat12}/UKB_QC_Vol.FinalBod.${div} --adj-probe --covar covar_discr_main -qcovar covar2_quant_surf_body_size_main --make-bod --out ${cat12}/UKB_QC_${proc}.adj_probe|;
+${bind}/osca --befile ${cat12}/UKB_QC_${proc}.adj_probe --rint-probe --make-bod --out ${cat12}/UKB_QC_${proc}.adj_probe.rank_norm|;
+" 8 150G ${proc}_Ajd_Probe 120:00:00 "--partition=bigmem"
+done
+done 
+
+
+```
+
+
+where are voxels with min pvalues 
+```{R,eval=F}
+library(data.table)
+AnatAtlas<-fread('../MNI/CODE/all_atlases_Anat')
+minpvalAnat<-fread('../../Downloads/pvalmin50_Anat')
+colnames(minpvalAnat)<-c('V2','V1')
+AnatAtlas50<-AnatAtlas[AnatAtlas$V2 %in% c(minpvalAnat$V2),]
+AnatAtlas50<-merge(AnatAtlas50,minpvalAnat,by=c('V2'))
+AnatAtlas50<-AnatAtlas50[order(AnatAtlas50$V1.y,decreasing = FALSE),]
+summary(as.factor(AnatAtlas50$AtlasH0_3region))
+```
+
+where are voxels with min pvalues 
+```{R,eval=F}
+VbmAtlas<-fread('../MNI/CODE/all_atlases_Vbm')
+minpvalVbm<-fread('../../Downloads/pvalmin50_Vbm')
+
+VbmAtlas50<-VbmAtlas[VbmAtlas$V2 %in% c(minpvalVbm$V1),]
+summary(as.factor(VbmAtlas50$AtlasH0_3region))
+```
+
+plots sumR2+optimal threshold and same with rank norm
+
+```{R,eval=F}
+proc<-c('Anat','Vbm','CAT12V','CAT12S','FSTh')
+indep<-c(113,81,56,14,53)
+rank<-c(112,79,65,14,56)
+sumR2<-c(48,42,240,1471,137)
+df_indep<-data.frame(indep,sumR2)
+colnames(df_indep)<-c('percent_test','sumR2')
+df_indep$method<-'classic'
+df_indep$Proc<-proc
+df_rank<-data.frame(rank,sumR2)
+colnames(df_rank)<-c('percent_test','sumR2')
+df_rank$method<-'rank_norm'
+df_rank$Proc<-proc
+
+df_tot<-rbind(df_indep,df_rank)
+
+library(ggplot2)
+ggplot(df_tot,aes(x=percent_test,y=sumR2,color=Proc,shape=method))+geom_point(size=4)
+
+model<-lm(indep~sumR2)
+summary(model)
+```
+
+Analyzing pvalmin_Traits = voxel with minimal pval for each trait
+```{R,eval=F}
+library(data.table)
+vbm<-fread('Results/pvalmin_Traits_FS_All_moda')
+colnames(vbm)<-c('vox','pvalminTrait','sumR2','pvalMinGlobal','Skewness','Kurtosis','logpvalMinGlobal','V1','V3','SubCort_Region','Cort_Region','Cer_Region','AtlasH0_3region','AtlasHO','AtlasJulich','Processing','X','Y','Z','Area')
+vbm<-as.data.frame(vbm)
+vbm$logpvalTrait<--log10(vbm$pvalminTrait)
+vbm_global<-vbm[vbm$Area=='Global',]
+vbm_global<-vbm_global[order(vbm_global$logpvalTrait,decreasing=T),]
+vbm_global$Trait<-seq(1,1000)
+
+
+vbm_cort<-vbm[vbm$Area=='Cort',]
+vbm_cort<-vbm_cort[order(vbm_cort$logpvalTrait,decreasing=T),]
+vbm_cort$Trait<-seq(1,1000)
+
+
+vbm_subcort<-vbm[vbm$Area=='Subcort',]
+vbm_subcort<-vbm_subcort[order(vbm_subcort$logpvalTrait,decreasing=T),]
+vbm_subcort$Trait<-seq(1,1000)
+
+vbm_cer<-vbm[vbm$Area=='Cer',]
+vbm_cer<-vbm_cer[order(vbm_cer$logpvalTrait,decreasing=T),]
+vbm_cer$Trait<-seq(1,1000)
+
+vbm_total10<-rbind(vbm_global[1:10,],vbm_subcort[1:10,],vbm_cort[1:10,],vbm_cer[1:10,])
+vbm_total<-rbind(vbm_global,vbm_subcort,vbm_cort,vbm_cer)
+
+ggplot(vbm_total,aes(x=Trait,y=logpvalTrait,colour=Area))+geom_point()
+
+
+
+vbm_global[50,'pvalminTrait']
+vbm_cort[50,'pvalminTrait']
+vbm_subcort[50,'pvalminTrait']
+vbm_cer[50,'pvalminTrait']
+```
+
+pour adj probe rank norm, anat et vbm regarder en details
+```{R,eval=F}
+anat_adj<-fread('Results/pvalmin_Traits_Anat')
+anat_adj<-as.data.frame(anat_adj)
+anat_adj<-anat_adj[order(anat_adj$pval,decreasing=FALSE),]
+
+anat_adj_unique<-anat_adj[,c('vox','pval','AtlasJulich')]
+anat_adj_unique<-unique(anat_adj_unique)
+
+anat_adj_unique_global<-anat_adj[anat_adj$Area=='Global',c('vox','pval','AtlasJulich','V1')]
+anat_adj_unique_global<-unique(anat_adj_unique_global)
+#voxels avec les pval les plus petites : 19811 37291 152165 24469 
+
+#on plot les 1000 sur cerveau
+
+library(oro.nifti)
+
+img<-data.frame(vox=seq(1,902629),val=0)
+atlas<-fread('../02_Multiple_testing/df_all_watlas_Anat')
+img[img$vox %in% atlas$V1,'val']<-1
+img[img$vox %in% anat_adj_unique_global$V1,'val']<-10
+arr<-array(img$val,dim=c(91,109,91))
+writeNIfTI(arr,'pvalMinTraitAnat_adj_rank')
+
+```
+
+
+```{bash,eval=F}
+bod='/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BodFiles_LDSC'
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/BRM_Vol/Random_traits/Results"
+bind="/network/lustre/iss02/ukbiobank/software"
+
+
+cd $wd
+
+${bind}/qsubshcom "${bind}/osca --befile ${bod}/UKB_QC_FS_Thickness.adj_probe.rank_norm --extract-probe maxKurt_FSTh --make-efile --out maxKurtFSTh_adj_rank.txt" 1 10G Anat_ajdpr_txt 04:00:00 "--partition=normal" 
+
+${bind}/qsubshcom "${bind}/osca --befile ${bod}/UKB_QC_FS_Thickness_1000.FinalBod.main --extract-probe maxKurt_FSTh --make-efile --out maxKurtFSTh_1000.txt" 1 10G Anat_txt 04:00:00 "--partition=normal" 
+
+```
+
+
+#on plot leur distrib et on regarde à quoi ces memes voxels ressemblent dans Vbm 
+```{R,eval=F}
+library(data.table)
+Anatmin<-fread('../Filezilla_dl/maxKurtFSTh_1000.txt')
+Anatmin<-as.data.frame(Anatmin)
+colnames(Anatmin)<-c('ID','ID','probe2','probe3','probe4')
+Anatmin<-Anatmin[,-c(1,2)]
+Anatmin$Method<-'Basic'
+
+AnatAdjmin<-fread('../Filezilla_dl/maxKurtFSTh_adj_rank.txt')
+AnatAdjmin<-as.data.frame(AnatAdjmin)
+colnames(AnatAdjmin)<-c('ID','ID','probe2','probe3','probe4')
+AnatAdjmin<-AnatAdjmin[,-c(1,2)]
+AnatAdjmin$Method<-'Adj_probe_rank_norm'
+
+histo<-rbind(Anatmin,AnatAdjmin)
+
+library(ggplot2)
+library(hrbrthemes)
+ggplot(histo,aes(x=probe2,fill=Method))+geom_histogram(bins = 300,alpha=0.6)+theme_ipsum()
+
+
+mi<-fread('Results/pval_min_tot_Vbm')
+miadj<-fread('Results/pval_min_tot_Vbm_adj_probe.rank_norm')
+
+```
+
+
+#Run BWAS on phenotype
+```{bash,eval=F}
+
+wd="/network/iss/ukbiobank/ukbiobank-remaining/elise.delzant/BRM_Vol"
+bind="/network/iss/ukbiobank/software"
+bods="/network/iss/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesMain"
+
+
+cd $wd 
+
+for proc in Vbm FS_All_moda
+do
+for div in main
+do 
+${bind}/qsubshcom "pheno=\$(sed -n \"\${TASK_ID}{p;q}\" ${wd}/pheno_allList)|;
+echo \${pheno}|;
+${bind}/osca --befile ${bods}/UKB_QC_${proc}.FinalBod.main  --pheno df_main_\${pheno} --covar covar_discr_${div} --qcovar covar2_quant_fs_body_size_${div} --linear --out Random_traits/Results/${proc}/resu_${proc}_LR_\${pheno}|;
+" 4 150G ${proc} 03:00:00 "-array=1-5"
+done 
+done
+
+for proc in CAT12_Surface_adj_probe.rank_norm CAT12_Volume_adj_probe.rank_norm 
+do
+${bind}/qsubshcom "pheno=\$(sed -n \"\${TASK_ID}{p;q}\" ${wd}/pheno_allList)|;
+${bind}/osca --befile ${cat12}/UKB_QC_${proc}  --pheno df_main_\${pheno} --linear --out Random_traits/Results/${proc}/resu_${proc}_LR_\${pheno}|;
+" 4 90G ${proc} 03:30:00 "-array=1-28"
+done 
+
+
+
+
+for proc in Anat Vbm CAT12_Volume CAT12_Surface FS_All_moda
+do
+for div in main
+do 
+${bind}/qsubshcom " pheno=\$(sed -n \"\${TASK_ID}{p;q}\" ${wd}/pheno_allList)|;
+${bind}/osca --befile ${bods}/UKB_QC_${proc}.FinalBod.main  --pheno df_main_\${pheno} --covar covar_discr_${div} --qcovar covar2_quant_${proc}_${div} --linear --out Random_traits/Results/${proc}/resu_${proc}_LR_\${pheno}|;
+" 4 120G ${proc}_BMI 03:00:00 "-array=20-21"
+done 
+done
+
+
+for proc in Anat Vbm CAT12_Volume CAT12_Surface FS_All_moda
+do
+for div in main
+do 
+${bind}/qsubshcom " pheno=\$(sed -n \"\${TASK_ID}{p;q}\" ${wd}/pheno_allList)|;
+${bind}/osca --befile ${bods}/UKB_QC_${proc}.FinalBod.main  --pheno df_main_\${pheno} --covar covar_discr_${div} --qcovar covar_quant_${proc}_${div} --linear --out Random_traits/Results/${proc}/resu_${proc}_LR_\${pheno}|;
+" 4 120G ${proc}_BMI 03:00:00 "-array=22-29"
+done 
+done
+
+```
+
+on test asso entre traits et replication dataset pr voir quels vox répliquent
+
+```{bash,eval=F}
+wd="/network/iss/ukbiobank/ukbiobank-remaining/elise.delzant/BRM_Vol"
+bind="/network/iss/ukbiobank/software"
+fsl="/network/iss/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesFSL"
+cat12="/network/iss/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesCAT12"
+fs="/network/iss/ukbiobank/ukbiobank-remaining/elise.delzant/BodFilesFS"
+
+cd $wd 
+
+for proc in FS_All_moda
+do
+for div in replicate
+do 
+${bind}/qsubshcom "pheno=\$(sed -n \"\${TASK_ID}{p;q}\" ${wd}/pheno_allList)|;
+echo \${pheno}|;
+${bind}/osca --befile ${fs}/UKB_QC_${proc}.FinalBod.${div}  --pheno df_${div}_\${pheno} --covar covar_discr_${div} --qcovar covar2_quant_${proc}_body_size_${div} --linear --out Random_traits/Results/${proc}/resu_${proc}_LR_\${pheno}_${div}|;
+" 4 120G ${proc} 08:00:00 "-array=1-18"
+done 
+done
+
+
+```

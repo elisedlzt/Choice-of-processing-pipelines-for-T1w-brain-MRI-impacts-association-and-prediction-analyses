@@ -1,0 +1,752 @@
+---
+title: "FSLANAT and FSLVBM pipeline"
+author: "by Elise Delzant - `r format(Sys.time(), '%d %B %Y')`"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  epuRate::PCTG:
+    toc: TRUE
+    number_sections: FALSE
+    code_folding: "show"
+---
+
+
+```{r, echo=FALSE}
+options(width = 60)
+knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 60), tidy = TRUE)
+
+```
+
+# Create bulk file
+
+```{bash, message=FALSE, eval=FALSE}
+
+bind="/network/lustre/iss02/ukbiobank/software" 
+wd="/network/lustre/iss02/ukbiobank/unorganized/unorganized_pheno"
+cd $wd
+${bind}/ukbconv ukb50815.enc_ukb bulk -s20253
+
+
+```
+
+# Extract first visits (remove imaging second wave)
+
+```{R, message=FALSE, eval=FALSE}
+
+blk=read.table("ukb50815_20252.bulk", stringsAsFactors = F)
+
+table(blk$V2)
+write.table(blk[-which(blk$V2=="20252_3_0"),], "ukb50815.20252_2.bulk", col.names = F, row.names = F, quote=F)
+
+```
+
+#Remove unusable subjects (that I gotten through the FSL process (_20252))
+
+```{R, message =FALSE, eval=FALSE}
+blk_v2=read.table("ukb50815.20252_2.bulk",stringsAsFactors = F)
+unusable=read.table("unusable.csv",header=F)
+usables=setdiff(ukb$V1,unusable$V1)
+ukb_usable=ukb[ukb$V1 %in%usables,]
+write.table(ukb_usable,'ukb50815.20252.bulk',col.names=F,row.names=F,quote=F)
+
+```
+
+#before
+```{bash, message=FALSE, eval=FALSE}
+
+bind="/network/lustre/iss02/ukbiobank/software" 
+ukb="/network/lustre/iss02/ukbiobank/unorganized/unorganized_pheno" # UKB files
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+
+mkdir -p ${wd}/Downloadfsl
+cp ${ukb}/k53185r50815.key ${wd}/Downloadfsl/k53185r50815.key
+cp ${wd}/ukb50815.20252.bulk  ${wd}/Downloadfsl/ukb50815.20252.bulk
+
+bind="/network/lustre/iss02/ukbiobank/software" 
+ukb="/network/lustre/iss02/ukbiobank/unorganized/unorganized_pheno" # UKB files
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+
+
+
+cd /network/lustre/iss02/home/elise.delzant/Downloadfsl
+bind="/network/lustre/iss02/ukbiobank/software" 
+
+for step in $(seq 1 1 1)   # ....
+do 
+${bind}/ukbfetch -bdiff.bulk -ak53185r673035.key -s${step} -m1 #new key 
+done 
+```
+
+
+#step 0 create directory 
+```{bash, echo=FALSE, message=FALSE, warning=FALSE,eval=F}
+wd='/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/Downloadfsl'
+ukb="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+cd ${ukb}
+mkdir -p FSLVBM_files
+mkdir -p FSLVBM
+
+
+cd ${ukb}/FSLVBM_files
+
+mkdir -p Template_anat
+mkdir -p Template_vbm
+
+cd ${ukb}/FSLVBM_files/Template_vbm
+echo -n >mergelist_vbm 
+echo -n >mergelist_vbm2
+
+
+cd ${ukb}/FSLVBM_files/Template_anat
+echo -n >mergelist_anat
+echo -n >mergelist_anat2
+
+ukb="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+cd ${ukb}/Downloadfsl
+echo *.zip> id.csv
+```
+
+#convert array to table
+```{r, echo=FALSE,message=FALSE,warning=FALSE,eval=F}
+id<-read.table("id.csv",sep=" ",header=FALSE)
+write.table(t(id),"../../../id.csv",row.names = FALSE,col.names = FALSE)
+getwd()
+```
+
+
+#step 1-2ab : brain extraction and tissue seg for vbm, and Affine-registration to the GM ICBM-152 template, concatenation and average for both 
+
+```{bash, echo=FALSE, message=FALSE, warning=FALSE,eval=F}
+#!/bin/bash
+#SBATCH --partition=bigmem
+#SBATCH --job-name=fsl
+#SBATCH --time=00:25:00
+#SBATCH --mem=1G
+#SBATCH --chdir=/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/Downloadfsl
+#SBATCH --ntasks=1
+#SBATCH --array=1-1
+#SBATCH --output=/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/logs/fsl.log
+#SBATCH --error=/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/logs/fsl.err
+#SBATCH --cpus-per-task=1
+
+module load FSL
+
+T=${FSLDIR}data/standard/tissuepriors/avg152T1_gray
+wd='/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/Downloadfs'
+ukb="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+fsl=${ukb}/FSLVBM
+fsl_f=${ukb}/FSLVBM_files
+cd ${wd}
+export participants=id.csv
+dat_0=$(sed -n ${SLURM_ARRAY_TASK_ID}p $participants)
+
+dat=`echo ${dat_0}| xargs`
+
+subject=$(echo $dat | cut -d'_' -f 1)
+echo ${subject}
+
+pdir=${wd}/${subject}
+mkdir -p ${pdir} 
+unzip ${wd}/${dat} -d ${pdir}
+
+fslsub=${fsl}/${subject}
+mkdir -p ${fslsub}'/anat'
+mkdir -p ${fslsub}'/vbm'
+
+mv ${pdir}'/T1/T1_fast/T1_brain_pve_1.nii.gz' ${fslsub}'/anat'
+mv ${pdir}'/T1/T1_fast/T1_brain_pve_2.nii.gz' ${fslsub}'/anat'
+mv ${pdir}'/T1/T1_brain.nii.gz' ${fslsub}'/vbm'
+
+#for the fslanat pipeline we rename the image and register image to grey matter template T
+cd ${fslsub}'/anat'
+for g in `${FSLDIR}bin/imglob *brain_pve_1*` 
+do
+${FSLDIR}bin/immv ${g} ${g}_struc
+done
+
+for g in `${FSLDIR}bin/imglob *_struc.*`
+do
+${FSLDIR}bin/fsl_reg ${g} $T ${g}_GM_to_T -a
+done
+
+name=`echo *_struc.* | sed 's/_struc././g'` 
+root=`$FSLDIR/bin/remove_ext $name | sort -u`
+path=${fslsub}/anat/${root}_struc_GM_to_T
+cd ${fsl_f}/Template_anat
+echo ${path} >>mergelist_anat
+
+#for the fslvbm pipeline fslvbm1_bet , creates a 'struc' file with renamed images of brain extraction
+cd ${fslsub}'/vbm'
+fslvbm_1_bet -b
+
+#step 2a for this pipeline, brain extraction and tissue segmentation 
+cd struc
+for g in `$FSLDIR/bin/imglob *_struc.*` 
+do
+$FSLDIR/bin/fast -R 0.3 -H 0.1 ${g}_brain 
+$FSLDIR/bin/immv ${g}_brain_pve_1 ${g}_GM 
+done
+
+for g in `${FSLDIR}bin/imglob *_struc.*`
+do
+${FSLDIR}bin/fsl_reg ${g}_GM $T ${g}_GM_to_T -a
+done
+
+name=`echo *_struc.* | sed 's/_struc././g'` 
+root=`$FSLDIR/bin/remove_ext $name | sort -u`
+path=${fslsub}/vbm/struc/${root}_struc_GM_to_T
+cd ${fsl_f}/Template_vbm
+echo ${path} >>mergelist_vbm
+
+cd ${wd}
+rm -r ${subject}
+rm ${subject}'_20252_2_0.zip'
+```
+
+#step 2c : Averaged image is flipped along x-axis and the two mirror images then re-averaged  first-pass template 
+```{bash, echo=FALSE, message=FALSE, warning=FALSE,eval=F}
+#!/bin/bash
+#SBATCH --partition=bigmem
+#SBATCH --job-name=fsl
+#SBATCH --time=02:00:00
+#SBATCH --mem=4G
+#SBATCH --chdir=/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/Downloadfsl
+#SBATCH --ntasks=1
+#SBATCH --output=/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/logs/template1.log
+#SBATCH --error=/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/logs/template1.err
+#SBATCH --cpus-per-task=1
+
+tps=$(date)
+echo $tps
+module load FSL
+wd='/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/Downloadfsl'
+ukb="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+fsl=${ukb}/FSLVBM
+fsl_f=${ukb}/FSLVBM_files
+cd ${fsl_f}/Template_anat
+
+mergelist=`cat mergelist_anat`
+
+${FSLDIR}bin/fslmerge -t template_4D_GM $mergelist
+${FSLDIR}bin/fslmaths template_4D_GM -Tmean template_GM
+${FSLDIR}bin/fslswapdim template_GM -x y z template_GM_flipped
+${FSLDIR}bin/fslmaths template_GM -add template_GM_flipped -div 2 template_GM_init
+
+cd ${fsl_f}/Template_vbm
+mergelist=`cat mergelist_vbm`
+${FSLDIR}bin/fslmerge -t template_4D_GM $mergelist
+${FSLDIR}bin/fslmaths template_4D_GM -Tmean template_GM
+${FSLDIR}bin/fslswapdim template_GM -x y z template_GM_flipped
+${FSLDIR}bin/fslmaths template_GM -add template_GM_flipped -div 2 template_GM_init
+
+tps_fin=$(date)
+echo $tps_fin
+```
+
+#step 2d: Non-linear Registration to first pass template ,concatenation and average
+```{bash, echo=FALSE, message=FALSE, warning=FALSE,eval=F}
+#!/bin/bash
+#SBATCH --partition=bigmem
+#SBATCH --job-name=fsl
+#SBATCH --time=00:20:00
+#SBATCH --mem=1G
+#SBATCH --chdir=/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/Downloadfsl
+#SBATCH --ntasks=1
+#SBATCH --array=1-400
+#SBATCH --output=/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/logs/fsl.log
+#SBATCH --error=/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/logs/fsl.err
+#SBATCH --cpus-per-task=1
+
+module load FSL 
+
+wd='/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/Downloadfsl'
+ukb="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+fsl=${ukb}/FSLVBM
+fsl_f=${ukb}/FSLVBM_files
+T_anat=${fsl_f}/Template_anat/template_GM_init 
+T_vbm=${fsl_f}/Template_vbm/template_GM_init
+
+cd ${wd}
+export participants=id.csv
+
+dat_0=$(sed -n ${SLURM_ARRAY_TASK_ID}p $participants)
+dat=`echo ${dat_0}| xargs`
+subject=$(echo $dat | cut -d'_' -f 1)
+
+fslsub=${fsl}/${subject}
+
+#fslvbm2d for pipeline anat 
+cd ${fslsub}'/anat'
+for g in `$FSLDIR/bin/imglob *_struc.*`
+do 
+${FSLDIR}/bin/fsl_reg ${g} $T_anat ${g}_GM_to_T_init -fnirt "--config=GM_2_MNI152GM_2mm.cnf"
+done 
+
+
+name=`echo *_struc.* | sed 's/_struc././g'` 
+root=`$FSLDIR/bin/remove_ext $name | sort -u`
+path=${fslsub}/anat/${root}_struc_GM_to_T_init
+cd ${fsl_f}/Template_anat
+echo ${path} >>mergelist_anat2
+
+#fslvbm2d for pipeline vbm
+
+cd ${fslsub}'/vbm'
+cd struc 
+for g in `$FSLDIR/bin/imglob *_struc.*`
+do 
+${FSLDIR}/bin/fsl_reg ${g}_GM $T_vbm ${g}_GM_to_T_init -fnirt "--config=GM_2_MNI152GM_2mm.cnf"
+done 
+
+name=`echo *_struc.* | sed 's/_struc././g'` 
+root=`$FSLDIR/bin/remove_ext $name | sort -u`
+path=${fslsub}/vbm/struc/${root}_struc_GM_to_T_init
+cd ${fsl_f}/Template_vbm
+echo ${path} >>mergelist_vbm2
+
+
+```
+
+#step 2e:Averaged image is flipped along x-axis and the two mirror images then re-averaged --> GM template 
+```{bash, echo=FALSE, message=FALSE, warning=FALSE,eval=F}
+#!/bin/bash
+#SBATCH --partition=bigmem
+#SBATCH --job-name=fsl
+#SBATCH --time=01:00:00
+#SBATCH --mem=4G
+#SBATCH --chdir=/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/Downloadfsl
+#SBATCH --ntasks=1
+#SBATCH --output=/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/logs/template1.log
+#SBATCH --error=/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/logs/template1.err
+#SBATCH --cpus-per-task=1
+
+tps=$(date)
+echo $tps
+
+module load FSL
+
+wd='/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/Downloadfsl'
+ukb="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+fsl=${ukb}/FSLVBM
+fsl_f=${ukb}/FSLVBM_files
+
+cd ${fsl_f}/Template_anat
+mergelist=`cat mergelist_anat_2`
+$FSLDIR/bin/fslmerge -t template_4D_GM $mergelist
+$FSLDIR/bin/fslmaths template_4D_GM -Tmean template_GM
+$FSLDIR/bin/fslswapdim template_GM -x y z template_GM_flipped
+$FSLDIR/bin/fslmaths template_GM -add template_GM_flipped -div 2 template_GM
+
+cd ${fsl_f}/Template_vbm
+mergelist=`cat mergelist_vbm_2`
+$FSLDIR/bin/fslmerge -t template_4D_GM $mergelist
+$FSLDIR/bin/fslmaths template_4D_GM -Tmean template_GM
+$FSLDIR/bin/fslswapdim template_GM -x y z template_GM_flipped
+$FSLDIR/bin/fslmaths template_GM -add template_GM_flipped -div 2 template_GM
+
+
+tps_fin=$(date)
+echo $tps_fin
+```
+
+#step 3a: Register all images to template
+```{bash, echo=FALSE, message=FALSE, warning=FALSE,eval=F}
+#!/bin/bash
+#SBATCH --partition=bigmem
+#SBATCH --job-name=fsl
+#SBATCH --time=00:25:00
+#SBATCH --mem=1G
+#SBATCH --chdir=/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/Downloadfsl
+#SBATCH --ntasks=1
+#SBATCH --array=1-200
+#SBATCH --output=/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/logs/fsl.log
+#SBATCH --error=/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/logs/fsl.err
+#SBATCH --cpus-per-task=1
+
+module load FSL
+
+wd='/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/Downloadfsl'
+ukb="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+fsl=${ukb}/FSLVBM
+fsl_f=${ukb}/FSLVBM_files
+template_GM_anat=${fsl_f}/Template_anat/template_GM
+template_GM_vbm=${fsl_f}/Template_vbm/template_GM
+
+cd ${wd}
+export participants=id.csv
+dat_0=$(sed -n ${SLURM_ARRAY_TASK_ID}p $participants)
+
+dat=`echo ${dat_0}| xargs`
+
+subject=$(echo $dat | cut -d'_' -f 1)
+
+fslsub=${fsl}/${subject}
+
+#fslvbm3a for pipeline anat 
+cd ${fslsub}'/anat'
+for g in `$FSLDIR/bin/imglob *_struc.*`
+do 
+${FSLDIR}/bin/fsl_reg ${g} $template_GM_anat ${g}_GM_to_template_GM -fnirt "--config=GM_2_MNI152GM_2mm.cnf --jout=${g}_JAC_nl"
+$FSLDIR/bin/fslmaths ${g}_GM_to_template_GM -mul ${g}_JAC_nl ${g}_GM_to_template_GM_mod -odt float
+done 
+
+#fslvbm3a for pipeline vbm 
+
+cd ${fslsub}'/vbm'
+cd struc 
+for g in `$FSLDIR/bin/imglob *_struc.*`
+do 
+${FSLDIR}/bin/fsl_reg ${g}_GM $template_GM_vbm ${g}_GM_to_template_GM -fnirt "--config=GM_2_MNI152GM_2mm.cnf --jout=${g}_JAC_nl"
+$FSLDIR/bin/fslmaths ${g}_GM_to_template_GM -mul ${g}_JAC_nl ${g}_GM_to_template_GM_mod -odt float
+done 
+```
+
+#create a mask on all output files, that represents voxels that are equal to zero for all output images 
+```{bash, echo=FALSE, message=FALSE, warning=FALSE,eval=F}
+vbm="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/FSLVBM"
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+
+cd ${wd}
+bind="/network/lustre/iss02/ukbiobank/software" 
+${bind}/qsubshcom "source /network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/code/source_conda|;
+conda activate r_env|;
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"|;
+vbm="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/FSLVBM"|;
+Rscript /network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/code/mask_zero.R Downloadfsl/participants.tsv \${wd} \${vbm} "anat/T1_brain_pve_1_struc_GM_to_template_GM_mod.nii.gz"|;  
+" 1 12G fsl_mask 10:00:00 " "
+```
+
+
+
+#add script that keep only gm mod registered nifti, and convert it to tsv 
+```{bash, echo=FALSE, message=FALSE, warning=FALSE,eval=F}
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/lustre/iss02/ukbiobank/software" 
+cd ${wd}
+${bind}/qsubshcom "dat=\$(sed -n \"\${TASK_ID}{p;q}\" ${wd}/Downloadfsl/participants.tsv)|;
+mkdir -p ${wd}/FSLVBM/\${dat}/output|;
+mkdir -p ${wd}/FSLVBM/\${dat}/output/vbm|;
+mkdir -p ${wd}/FSLVBM/\${dat}/output/anat|;
+cp ${wd}/FSLVBM/\${dat}/vbm/T1_brain.nii.gz ${wd}/FSLVBM/\${dat}/output/T1_brain.nii.gz|;
+cp ${wd}/FSLVBM/\${dat}/vbm/struc/T1_brain_struc_GM_to_template_GM_mod.nii.gz ${wd}/FSLVBM/\${dat}/output/vbm/T1_brain_struc_GM_to_template_GM_mod.nii.gz|;
+cp ${wd}/FSLVBM/\${dat}/vbm/struc/T1_brain_struc_GM_to_template_GM.nii.gz ${wd}/FSLVBM/\${dat}/output/vbm/T1_brain_struc_GM_to_template_GM.nii.gz|;
+cp ${wd}/FSLVBM/\${dat}/anat/T1_brain_pve_1_struc_GM_to_template_GM_mod.nii.gz ${wd}/FSLVBM/\${dat}/output/anat/T1_brain_pve_1_struc_GM_to_template_GM_mod.nii.gz|;
+cp ${wd}/FSLVBM/\${dat}/anat/T1_brain_pve_1_struc_GM_to_template_GM.nii.gz ${wd}/FSLVBM/\${dat}/output/anat/T1_brain_pve_1_struc_GM_to_template_GM.nii.gz|;
+source /network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/code/source_conda|;
+conda activate r_env|;
+Rscript /network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/code/nii_to_tsv.R  ${wd}/FSLVBM/\${dat} ${wd}/FSLVBM_files/Masks/mask_zero_vbm_mod.nii.gz ${wd}/FSLVBM_files/Masks/mask_zero_anat_mod.nii.gz ${wd}/FSLVBM/\${dat}/output|;
+rm -r ${wd}/FSLVBM/\${dat}/anat|;
+rm -r ${wd}/FSLVBM/\${dat}/vbm|;
+" 1 4G nii_to_tsv 00:30:00 "-array=1-42789" 
+```
+
+
+#corresponding Rscript 
+```{R, echo=FALSE, message=FALSE, warning=FALSE,eval=F}
+arg = commandArgs(trailingOnly=TRUE)
+
+#entrée liste des paths 
+library(oro.nifti)
+
+wd=arg[1]
+id=arg[2]
+mask_dir_vbm=arg[3]
+mask_dir_anat=arg[4]
+output_dir=arg[5]
+
+filedir=paste(wd,id,sep='/')
+img_vbm<-readNIfTI(paste(filedir,'vbm/struc/T1_brain_struc_GM_to_template_GM_mod.nii.gz',sep='/'),reorient=FALSE)
+img_anat<-readNIfTI(paste(filedir,'anat/T1_brain_pve_1_struc_GM_to_template_GM_mod.nii.gz',sep='/'),reorient=FALSE)
+mask_vbm<-readNIfTI(mask_dir_vbm,reorient=FALSE)
+mask_anat<-readNIfTI(mask_dir_anat,reorient=FALSE)
+c_mask_vbm<-c(mask_vbm)
+c_mask_anat<-c(mask_anat)
+
+c_vbm<-c(img_vbm)
+c_anat<-c(img_anat)
+
+c_vbm<-c_vbm[c_mask_vbm!=0]
+c_anat<-c_anat[c_mask_anat!=0]
+
+write.table(c_vbm,paste(ouput_dir,'struc/vbm_mod_masked.tsv',sep='/'),row.names=F,col.names=F)
+write.table(c_anat,paste(ouput_dir,'anat/anat_mod_masked.tsv',sep='/'),row.names=F,col.names=F)
+
+
+```
+
+#add ID to anat and vbm tsv
+```{bash, message=FALSE, eval=F}
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/lustre/iss02/ukbiobank/software" 
+cd ${wd}
+${bind}/qsubshcom "dat=\$(sed -n \"\${TASK_ID}{p;q}\" ${wd}/Downloadfsl/participants.tsv)|;
+cd ${wd}/FSLVBM/\${dat}/output/anat|;
+echo \${dat} > anat_mod_masked_id.tsv|;
+cat anat_mod_masked.tsv>>anat_mod_masked_id.tsv|;
+rm anat_mod_masked.tsv|;
+cd ${wd}/FSLVBM/\${dat}/output/vbm|;
+echo \${dat} > vbm_mod_masked_id.tsv|;
+cat vbm_mod_masked.tsv>>vbm_mod_masked_id.tsv|;
+rm vbm_mod_masked.tsv|;
+" 1 4G id_to_tsv 00:30:00 "-array=2-42789" 
+
+```
+
+#create file with all output .tsv from each pipeline
+#a batch = 500 participants
+```{bash, message=FALSE, eval=F}
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+dl="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/Downloadfsl"
+bind="/network/lustre/iss02/ukbiobank/software" 
+cd ${wd}/FSLVBM
+for batch in {01..86}
+do 
+echo>tsv_anat_batch${batch}
+for elem in `cat ${dl}/participants.batch${batch}`
+do 
+paste tsv_anat_batch${batch} $elem/output/anat/anat_mod_masked_id.tsv>anat_tmp_batch${batch}
+cp anat_tmp_batch${batch} tsv_anat_batch${batch}
+done 
+rm anat_tmp_batch${batch}
+done 
+
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+dl="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/Downloadfsl"
+bind="/network/lustre/iss02/ukbiobank/software" 
+cd ${wd}/FSLVBM
+for batch in {01..86}
+do 
+echo>tsv_vbm_batch${batch}
+for elem in `cat ${dl}/participants.batch${batch}`
+do 
+paste tsv_vbm_batch${batch} $elem/output/vbm/vbm_mod_masked_id.tsv>vbm_tmp_batch${batch}
+cp vbm_tmp_batch${batch} tsv_vbm_batch${batch}
+done 
+rm vbm_tmp_batch${batch}
+done 
+
+
+
+
+```
+
+
+
+#Merging all batches 
+#create BodFiles 
+
+# Import text files in OSCA
+
+```{bash, message=FALSE, eval=F}
+
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/lustre/iss02/ukbiobank/software" 
+
+
+mkdir -p ${wd}/FSLVBM/BodFilesFSL
+od="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant/FSLVBM"
+cd ${od}
+proc=vbm
+for batch in {01..86}
+do
+# Cortical
+${bind}/qsubshcom " paste voxel_${proc} tsv_${proc}_batch${batch}>tsv_${proc}_batch${batch}vox|;
+rm tsv_${proc}_batch${batch}|;
+${bind}/osca --tefile ${od}/tsv_${proc}_batch${batch}vox --make-bod --no-fid --out ${od}/BodFilesFSL/${proc}.batch${batch}" 1 10G ${proc}_MakeBod${batch} 10:00:00 "" 
+done
+
+
+```
+
+#Merge all bod into one 
+#mybod.flist is a list with paths to bod files to be merged
+```{bash, message=FALSE, eval=F}
+
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/lustre/iss02/ukbiobank/software" 
+
+cd ${wd}/BodFilesFSL
+${bind}/qsubshcom " "${bind}"/osca --befile-flist "${wd}"/FSLVBM/BodFilesFSL/mybod.flistvbm --make-bod --no-fid --out "${wd}"/BodFilesFSL/UKB_VbmFinalBod " 1 8G Merging_Bod 02:00:00 "" 
+
+${bind}/qsubshcom " "${bind}"/osca --befile-flist "${wd}"/FSLVBM/BodFilesFSL/mybod.flistanat --make-bod --no-fid --out "${wd}"/BodFilesFSL/UKB_AnatFinalBod " 1 8G Merging_Bod 02:00:00 "" 
+```
+
+
+#extracting mean and var from BodFiles
+```{bash, message=FALSE, eval=F}
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/lustre/iss02/ukbiobank/software" 
+
+cd ${wd}/BodFilesFSL
+
+
+#mean and var for total bod 
+${bind}/qsubshcom " "${bind}"/osca --befile "${wd}"/BodFilesFSL/UKB_AnatFinalBod --get-mean --get-variance --out "${wd}"/BodFilesFSL/fsl_anat " 4 100G fsl_var_anat2 48:00:00 "" 
+
+${bind}/qsubshcom " "${bind}"/osca --befile "${wd}"/BodFilesFSL/UKB_VbmFinalBod  --get-mean --get-variance --out "${wd}"/BodFilesFSL/fsl_vbm " 4 100G fsl_var_vbm 48:00:00 "" 
+
+```
+
+#we want to keep only best voxels (ie the one that represent GM), we find a threshold according to mean and var of each vox 
+#plotting mean and var for each processing
+
+```{R, message=FALSE, eval=F}
+
+mean_anat<-read.table('../fsl_anat.mean.txt')
+var_anat<-read.table('../fsl_anat.var.txt')
+
+df<-data.frame(Mean=mean_vbm$V2,Var=var_vbm$V2,vox=mean_vbm$V1)
+ggplot(df,aes(Mean,Var))+geom_point(size=0.01)+ggtitle('FSLVBM')+theme(axis.text.x=element_text(size=16,face="bold"),axis.text.y=element_text(size=16,face="bold"),axis.title = element_text(size=24,face='bold'),plot.title=element_text(size=24,face='bold'))
+
+df_cut<-df[df$Mean>0.1 | df$Var>0.01,] #vbm = 181544, anat = 184 637 #threshold on mean and var 
+
+write.table(df_cut$vox,'../vox_to_keep_vbm',row.names=F,col.names=F) #les 181 544 qu'on garde parmi les 248053 pour vbm et 184 637 parmi 248053 pour anat 
+
+#plot these vox on image to get the mask 
+#we do the following lines for anat and vbm
+
+library(oro.nifti)
+pre_mask<-readNIfTI('../mask_zero_anat_mod.nii.gz',reorient=F)
+val<-c(pre_mask)
+vox<-seq(1,902629)
+pre_mask<-data.frame(val,vox)
+ones<-pre_mask[pre_mask$val==1,] #ceux qui valent 1 dans le pré mask, pre mask = on exclut les vox qui sont 0 en mean et var pour tout le monde
+corresp_vox<-cbind(ones,data.frame(mask2=seq(1,254019)))
+corresp_vox[!(corresp_vox$mask2 %in% df_cut$vox),'val']<-0
+mask<-corresp_vox[corresp_vox$val==1,]
+
+dim(mask)
+
+voxels<-seq(1,902629)
+img_df<-data.frame(voxels)
+img_df$value<-0
+
+img_df[which(img_df$voxels %in% mask$vox),'value']<-1
+img_df<-array(img_df$value,dim=c(91,109,91))
+
+writeNIfTI(img_df,file='../test_anat')
+
+
+#plot for one subject : rm val = 0 , on regarde que val <0.1 et on plot hist pour les 3 process
+im_cat12<-read.table('../../Filezilla_dl/mwp1T1_brain_id_3217683.tsv')
+im_vbm<-c(readNIfTI('../../Filezilla_dl/T1_brain_struc_GM_to_template_GM_mod_3217683.nii.gz'))
+im_anat<-c(readNIfTI('../../Filezilla_dl/T1_brain_pve_1_struc_GM_to_template_GM_mod_3217683.nii.gz'))
+
+im_cat12<-im_cat12$V1[-1]
+im_cat12<-im_cat12[im_cat12!=0] #345 207
+im_vbm<-im_vbm[im_vbm!=0] #160 230
+im_anat<-im_anat[im_anat!=0] #164 565
+
+df_cat12<-data.frame(Val=im_cat12,Process='CAT12')
+df_vbm<-data.frame(Val=im_vbm,Process='FSLVBM')
+df_anat<-data.frame(Val=im_anat,Process='FSLANAT')
+
+df_cat12<-df_cat12[df_cat12$Val<0.02,] #167 358
+df_vbm<-df_vbm[df_vbm$Val<0.02,] # 22 634
+df_anat<-df_anat[df_anat$Val<0.02,] # 22 266
+
+df<-rbind(df_cat12,df_vbm,df_anat)
+ggplot(df,aes(x=Val))+
+geom_histogram(data=df[df$Process=='FSLVBM',],fill='blue',alpha=0.2,bins=300)+
+geom_histogram(data=df[df$Process=='FSLANAT',],fill='green',alpha=0.2,bins=300)+
+geom_histogram(data=df[df$Process=='CAT12',],fill='red',alpha=0.2,bins=300)
+
+
+```
+
+
+
+#Get only voxels under cut off (cut_off.R file)
+
+```{bash, message=FALSE, eval=F}
+
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/lustre/iss02/ukbiobank/software" 
+
+cd ${wd}/BodFilesFSL
+
+for fsl in Anat Vbm 
+do
+${bind}/qsubshcom " "${bind}"/osca --befile "${wd}"/BodFilesFSL/UKB_${fsl}FinalBod --extract-probe vox_to_keep_${fsl} --make-bod --no-fid --out "${wd}"/BodFilesFSL/UKB_${fsl}_SubVox " 4 128G sub_Bod_${fsl} 48:00:00 "--partition=bigmem" 
+done 
+
+```
+
+
+#dividing into main and replicate 
+```{bash, message=FALSE, eval=FALSE}
+
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/lustre/iss02/ukbiobank/software" 
+
+cd ${wd}/BodFilesFSL
+
+for fsl in Anat Vbm
+do 
+for div in replicate main
+do
+${bind}/qsubshcom " "${bind}"/osca --befile "${wd}"/BodFilesFSL/UKB_${fsl}_SubVox --keep "${wd}"/BodFilesFSL/${div}_id.csv  --make-bod --no-fid --out "${wd}"/BodFilesFSL/UKB_${fsl}.FinalBod.${div} " 4 128G Bod_${fsl}.${div} 48:00:00 "--partition=bigmem" 
+done 
+done 
+```
+
+
+
+#BRM
+```{bash, message=FALSE,eval=FALSE}
+wd="/network/lustre/iss02/ukbiobank/ukbiobank-remaining/elise.delzant"
+bind="/network/lustre/iss02/ukbiobank/software" 
+
+cd ${wd}/BodFilesFSL
+
+for fsl in Anat Vbm
+do 
+for div in replicate main
+do
+${bind}/qsubshcom " "${bind}"/osca --befile "${wd}"/BodFilesFSL/UKB_${fsl}.FinalBod.${div} --make-orm-bin --out "${wd}"/BodFilesFSL/UKB_${fsl}.FinalBod.${div}.BRM --thread-num 5 " 8 120G FSL_BRM_calculation 10:00:00 "--partition=bigmem" 
+done 
+done 
+
+```
+
+
+#compare both BRM 
+
+```{R, message=FALSE, eval=FALSE}
+library(png)
+library(ggplot2)
+
+source("RR_4.0_BRM_QC_functions.R")
+
+brm1<-asBRM(readORMBin('UKB_Vbm.FinalBod.main.BRM'))
+brm2<-asBRM(readORMBin('UKB_Anat.FinalBod.main.BRM'))
+
+cor_fin<c()
+for (i in 1:dim(brm1)[1]){
+  cor_fin<-c(cor_fin,cor(brm1[i,],brm2[i,]))
+}
+
+cor<-data.frame(cor=cor_fin)
+cor$id<-seq(1,dim(brm1)[1])
+
+png("corr_anat_vbm.png", width = 60, height = 30, units = "cm", res = 400)
+par(mfrow=c(1,2))
+ggplot(corr,aes(x=id,y=cor))+geom_point(size=0.01)
+dev.off()
+
+png("corr_anat_vbm2.png", width = 60, height = 30, units = "cm", res = 400)
+par(mfrow=c(1,2))
+ggplot(corr,aes(x=cor))+geom_histogram(binwidth = 0.01,fill="#69b3a2", color="#e9ecef", alpha=0.9)
+dev.off()
+
+
+```
+
+#final
+```{R}
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+```
+
+
+
+
+

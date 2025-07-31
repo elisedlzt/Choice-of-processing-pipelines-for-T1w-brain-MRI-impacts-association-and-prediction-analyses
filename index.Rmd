@@ -1,0 +1,16 @@
+---
+title: "Choice of T1w processing pipelines impact predictions and associations"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  epuRate::PCTG:
+    toc: TRUE
+    number_sections: FALSE
+    code_folding: "show"
+---
+
+```{r, echo=FALSE}
+
+knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 60), tidy = TRUE)
+
+```
+
